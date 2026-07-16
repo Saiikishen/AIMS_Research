@@ -19,7 +19,7 @@ BAUD_RATE     = 115200
 FULLSCREEN    = True
 SCREEN_SIZE   = [1920, 1080]
 OUTPUT_DIR    = 'data'
-IMAGE_DIR     = os.path.join('data', 'block-2 sentence completion')
+IMAGE_DIR     = os.path.join('data', 'VisualControl')
 
 FIXATION_DUR  = 3.5   # 3.5s pre-stimulus fixation
 IMAGE_DUR     = 2.0   # 4.0s picture display
@@ -28,7 +28,7 @@ GOODBYE_DUR   = 1.0   # 1.0s goodbye screen
 
 # ── RUNTIME PROMPT ────────────────────────────────────────────────────────────
 def prompt_info():
-    dlg = gui.Dlg(title='Sentence Completion')
+    dlg = gui.Dlg(title='Visual Control')
     dlg.addField('Subject ID:', 'S01')
     dlg.addField('Run (1 or 2):', '1')
     dlg.addField('Session:', '1')
@@ -99,7 +99,7 @@ def log(subj, ses, day, run, trial_num='', image_name='',
     _writer.writerow({
         'timestamp': now_str,
         'subj': subj, 'ses': ses, 'day': day,
-        'task': 'Sentence Completion', 'run': run,
+        'task': 'Visual Control', 'run': run,
         'trial_num': trial_num, 'image_name': image_name,
         'event': event_label,
         'onset_s': round(float(onset), 4) if onset != '' else '',
@@ -164,7 +164,7 @@ def run_picture_naming():
     init_serial()
     init_log(subj, ses, day, run)
 
-    # Discover and sort image files (Picture1.png to Picture30.png)
+
     if not os.path.exists(IMAGE_DIR):
         print(f"[ERROR] Image directory not found: {IMAGE_DIR}")
         close_log()
@@ -197,7 +197,7 @@ def run_picture_naming():
     img_stim = visual.ImageStim(win, image=None, size=(0.5, 0.5))
 
     # ── 1. Welcome Screen ─────────────────────────────────────────────────
-    msg.text = "Sentence Completion\n\nExperiment Start Now."
+    msg.text = "Visual Control\n\nExperiment Start Now."
     t_start = _clk.getTime()
     log(subj, ses, day, run, event_label='experiment_start',
         onset=t_start, duration=WELCOME_DUR)
