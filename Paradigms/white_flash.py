@@ -33,9 +33,11 @@ DEFAULT_IMAGE = os.path.join('data', 'blank-white-screen.png')
 
 # Flashing Sequence Configuration: list of (frequency_in_Hz, duration_in_seconds)
 FREQ_SEQUENCE = [
-    (8, 5.0),   # 8 Hz for 5 seconds
-    (9, 5.0),  # 12 Hz for 5 seconds
-    (10, 5.0),   # 9 Hz for 5 seconds
+    (8, 10.0),   # 8 Hz for 5 seconds
+    (9, 10.0),  # 12 Hz for 5 seconds
+    (10, 10.0),
+    (11, 10.0), 
+    (12, 10.0),  # 9 Hz for 5 seconds
 ]
 
 DELAY_DUR           = 5.0   # 5.0s delay in between switching frequencies
