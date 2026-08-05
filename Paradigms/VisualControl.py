@@ -5,6 +5,8 @@
 import os, csv, time, random, re
 from datetime import datetime
 # pyrefly: ignore [missing-import]
+from PIL import Image
+# pyrefly: ignore [missing-import]
 from psychopy import visual, core, event, gui
 
 try:
@@ -83,7 +85,7 @@ def init_log(subj, ses, day, run):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     fn = os.path.join(OUTPUT_DIR,
-         f'task5_picture_naming_{subj}_ses{ses}_day{day}_run{run}_{ts}.csv')
+         f'task5_visual_control_{subj}_ses{ses}_day{day}_run{run}_{ts}.csv')
     _fh = open(fn, 'w', newline='', encoding='utf-8')
     _writer = csv.DictWriter(_fh, fieldnames=_FIELDS)
     _writer.writeheader()
@@ -194,7 +196,7 @@ def run_picture_naming():
     msg = visual.TextStim(win, text='', height=0.05,
                           color='white', alignText='center', pos=(0, 0))
     fix = visual.TextStim(win, text='+', height=0.08, color='white')
-    img_stim = visual.ImageStim(win, image=None, size=(0.5, 0.5))
+    img_stim = visual.ImageStim(win, image=None)
 
     # ── 1. Welcome Screen ─────────────────────────────────────────────────
     msg.text = "Visual Control\n\nExperiment Start Now."
@@ -212,7 +214,15 @@ def run_picture_naming():
     # ── 3. Picture Naming Trial Loop ──────────────────────────────────────
     for tri, img_name in enumerate(img_files, start=1):
         img_path = os.path.join(IMAGE_DIR, img_name)
+        
+        # Calculate size to preserve aspect ratio and zoom in (80% of screen height)
+        with Image.open(img_path) as img:
+            img_w, img_h = img.size
+        target_height = 0.8
+        target_width = target_height * (img_w / img_h)
+        
         img_stim.setImage(img_path)
+        img_stim.size = (target_width, target_height)
 
         # ── Pre-stimulus fixation (3.5s) ──────────────────────────────
         t_fix = _clk.getTime()
