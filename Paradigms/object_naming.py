@@ -26,7 +26,7 @@ except ImportError:
 SERIAL_PORT   = 'COM3'
 BAUD_RATE     = 115200
 FULLSCREEN    = True
-SCREEN_SIZE   = [1920, 1080]
+SCREEN_SIZE   = [1920, 1200]
 OUTPUT_DIR    = 'data'
 IMAGE_DIR     = os.path.join('data', 'images')
 

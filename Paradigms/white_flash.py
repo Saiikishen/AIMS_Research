@@ -50,7 +50,7 @@ SERIAL_PORT   = 'COM3'
 BAUD_RATE     = 115200
 FULLSCREEN    = True
 # Used only if native-resolution detection below fails for some reason.
-FALLBACK_SCREEN_SIZE = [1920, 1080]
+FALLBACK_SCREEN_SIZE = [1920, 1200]
 OUTPUT_DIR    = 'data'
 IMAGE_DIR     = 'data'
 
