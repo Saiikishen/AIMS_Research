@@ -10,28 +10,6 @@ FEATURES
 5. Logs exact calendar date/time timestamps and event durations down to the microsecond.
 6. Robust square-wave (ON/OFF) frame-by-frame rendering loop prevents screen glitches and accurate frequency modulation across any screen refresh rate.
 
-CHANGELOG (display fix)
-------------------------
-- SCREEN_SIZE is no longer hardcoded to 1920x1080. The ROG Flow X13 (2022)
-  ships with a 16:10 panel (1920x1200 or 3840x2400), not 16:9. Forcing a
-  16:9 buffer into exclusive fullscreen on a fixed-resolution laptop panel
-  is the likely source of the horizontal banding/artifact -- PsychoPy now
-  lets pyglet use the monitor's actual native resolution.
-- wait_flash() no longer decides ON/OFF by polling wall-clock time. It now
-  measures the monitor's real refresh rate once at startup and drives the
-  square wave by FRAME COUNT, so every displayed frame is exactly one
-  win.flip() locked to vsync. This removes the drift/jitter that wall-clock
-  polling produces when the flash period doesn't divide evenly into the
-  refresh interval (true for essentially all of 8-12 Hz on any real panel).
-- The refresh-rate measurement is now sanity-checked. If win.getActualFrameRate()
-  returns something outside a plausible display range (a symptom of the GPU
-  driver/compositor not honoring vsync for this process), the script falls
-  back to 120 Hz -- the confirmed spec for the 2022 Flow X13's 1920x1200
-  panel -- instead of trusting a broken measurement. wait_flash() also paces
-  each flip() to a real-time deadline so block durations stay correct in
-  real seconds even if vsync isn't being honored.
-- Trigger timing, trial structure, block sequence, and logging fields are
-  unchanged.
 """
 
 import os, csv, time, random, re
@@ -49,20 +27,41 @@ except ImportError:
 SERIAL_PORT   = 'COM3'
 BAUD_RATE     = 115200
 FULLSCREEN    = True
-# Used only if native-resolution detection below fails for some reason.
 FALLBACK_SCREEN_SIZE = [1920, 1200]
 OUTPUT_DIR    = 'data'
 IMAGE_DIR     = 'data'
 
 # Flashing Sequence Configuration: list of (frequency_in_Hz, duration_in_seconds)
 FREQ_SEQUENCE = [
-    (6, 10.0),   # 8 Hz for 5 seconds
-    (8, 10.0),  
-    (10, 10.0),
-    (12, 10.0),   
+    (8, 20.0),   # 8 Hz for 5 seconds
+    (9, 20.0),  
+    (10, 20.0),
+    (11, 20.0),
+    (12, 20.0),   
 ]
 
-DELAY_DUR           = 5.0   # 5.0s delay in between switching frequencies
+# ── INTER-FLASH JITTER CONFIG ─────────────────────────────────────────────────
+# By default each flash lands at a perfectly constant interval (e.g. exactly every
+# 125ms at 8 Hz). Turning jitter on varies the SPACING between individual flashes
+# from cycle to cycle while keeping the OVERALL rate across each block locked to
+# exactly `freq` Hz -- same total flash count, same block duration, every time.
+JITTER_ENABLED   = True
+JITTER_FRACTION  = 0.2      # Max deviation from the nominal inter-flash interval, as
+                             # a fraction of that interval. At 8 Hz (125ms nominal)
+                             # this lets consecutive flashes land anywhere from
+                             # 100-150ms apart (e.g. 150ms then 100ms) while every
+                             # PAIR of flashes still sums to exactly 250ms -- so the
+                             # block always ends up with the same flash count/timing
+                             # it would have had at a constant rate.
+JITTER_MODE      = 'random'  # 'random'      -> a new random jitter magnitude every
+                              #                  pair (natural, varies pair to pair)
+                              # 'alternating' -> always the maximum jitter, alternating
+                              #                  +/- (e.g. exactly 150/100/150/100 ms
+                              #                  at 8 Hz with JITTER_FRACTION=0.2)
+JITTER_SEED      = None     # Set an int for a reproducible jitter sequence across
+                             # runs; leave as None for a fresh random sequence each run
+
+DELAY_DUR           = 9.5   # 9.5s delay in between switching frequencies
 FIXATION_DUR        = 5.0   # 5.0s initial pre-stimulus fixation before the first flash block
 WELCOME_DUR         = 1.0   # 1.0s initial welcome display
 GOODBYE_DUR         = 1.0   # 1.0s goodbye screen
@@ -100,17 +99,19 @@ def get_native_resolution(fallback=FALLBACK_SCREEN_SIZE):
 
 # ── RUNTIME PROMPT ────────────────────────────────────────────────────────────
 def prompt_info():
-    dlg = gui.Dlg(title='Frequency Flashing Task')
-    dlg.addField('Subject ID:', 'S01')
-    dlg.addField('Run (1 or 2):', '1')
-    dlg.addField('Session:', '1')
-    dlg.addField('Day:', '1')
-    dlg.addField('Image Name:', 'blank-white-screen.png')
-    data = dlg.show()
-    if not dlg.OK:
-        core.quit()
-    return (str(data[0]).strip(), str(data[1]).strip(),
-            str(data[2]).strip(), str(data[3]).strip(), str(data[4]).strip())
+    # dlg = gui.Dlg(title='Frequency Flashing Task')
+    # dlg.addField('Subject ID:', 'S01')
+    # dlg.addField('Run (1 or 2):', '1')
+    # dlg.addField('Session:', '1')
+    # dlg.addField('Day:', '1')
+    # dlg.addField('Image Name:', 'blank-white-screen.png')
+    # data = dlg.show()
+    # if not dlg.OK:
+    #     core.quit()
+    # return (str(data[0]).strip(), str(data[1]).strip(),
+    #         str(data[2]).strip(), str(data[3]).strip(), str(data[4]).strip())
+    
+    return ('S01', '1', '1', '1', 'blank-white-screen.png')
 
 # ── SERIAL TRIGGER ────────────────────────────────────────────────────────────
 _ser = None
@@ -251,7 +252,56 @@ def measure_refresh_rate(win, fallback_hz=NOMINAL_REFRESH_HZ):
     print(f'[DISPLAY] Measured refresh rate: {measured:.3f} Hz')
     return float(measured)
 
-def wait_flash(win, stims_to_draw, freq, dur, refresh_hz, subj, ses, day, run):
+def build_jittered_cycle_frames(n_flashes, nominal_period_s, refresh_hz,
+                                 jitter_fraction, mode, rng):
+    """
+    Build the number of display frames each individual flash cycle (one
+    ON+OFF period, i.e. one inter-flash interval) should last, so the
+    SPACING between consecutive flashes varies while the AVERAGE rate over
+    the whole block stays locked to the nominal frequency.
+
+    Flashes are handled in PAIRS: cycle[2k] = nominal + delta,
+    cycle[2k+1] = nominal - delta, where `delta` is re-drawn for every pair
+    (magnitude up to jitter_fraction * nominal_period_s; capped at 45% of
+    the nominal period as a safety margin so a cycle can never collapse to
+    ~0 frames). Because each pair sums to exactly 2x nominal_period_s, the
+    running total time and total flash count stay identical to the
+    un-jittered schedule -- only WHEN each individual flash lands moves
+    around. (If n_flashes is odd, the last unpaired flash gets the exact
+    nominal period, since it has no partner to compensate with.)
+
+    Seconds are converted to frames via CUMULATIVE-BOUNDARY snapping
+    (target cumulative time -> round to nearest frame boundary) rather than
+    rounding each cycle length independently, so per-cycle rounding error
+    can't accumulate into a drifting block duration -- same principle as
+    the deadline-pacing already used in wait_flash().
+    """
+    max_delta_s = nominal_period_s * min(jitter_fraction, 0.45)
+    periods_s = []
+    i = 0
+    while i < n_flashes:
+        if i + 1 < n_flashes:
+            delta = (max_delta_s if mode == 'alternating'
+                      else rng.uniform(-max_delta_s, max_delta_s))
+            periods_s.append(nominal_period_s + delta)
+            periods_s.append(nominal_period_s - delta)
+            i += 2
+        else:
+            # Odd flash left over with no partner -- give it the exact nominal period.
+            periods_s.append(nominal_period_s)
+            i += 1
+
+    frame_counts = []
+    cum_time_s = 0.0
+    prev_boundary = 0
+    for p in periods_s:
+        cum_time_s += p
+        boundary = int(round(cum_time_s * refresh_hz))
+        frame_counts.append(max(2, boundary - prev_boundary))  # >=2 so there's room for an ON and an OFF frame
+        prev_boundary = boundary
+    return frame_counts, periods_s
+
+def wait_flash(win, stims_to_draw, freq, dur, refresh_hz, subj, ses, day, run, rng=None):
     """
     Frame-locked square-wave (ON/OFF) flashing at `freq` Hz for `dur` seconds.
 
@@ -265,29 +315,63 @@ def wait_flash(win, stims_to_draw, freq, dur, refresh_hz, subj, ses, day, run):
     which would silently break EEG epoch alignment even though the frame
     count was "correct". The explicit deadline below guarantees the block's
     actual wall-clock duration matches `dur` regardless of driver behavior.
+
+    If JITTER_ENABLED, the interval between successive flashes is varied
+    per build_jittered_cycle_frames() instead of being perfectly constant --
+    the OVERALL flash rate across the block is still exactly `freq` Hz.
     """
-    frames_per_cycle = refresh_hz / float(freq)
-    half_cycle_frames = frames_per_cycle / 2.0
-    total_frames = int(round(dur * refresh_hz))
+    if not JITTER_ENABLED:
+        # ── Original constant-interval implementation (unchanged) ──────
+        frames_per_cycle = refresh_hz / float(freq)
+        half_cycle_frames = frames_per_cycle / 2.0
+        total_frames = int(round(dur * refresh_hz))
+        frame_period = 1.0 / refresh_hz
+        t_start = _clk.getTime()
+
+        for frame_n in range(total_frames):
+            check_esc(win, subj, ses, day, run)
+            phase = frame_n % frames_per_cycle
+            if phase < half_cycle_frames:
+                for s in stims_to_draw:
+                    s.draw()
+            target_t = t_start + (frame_n + 1) * frame_period
+            while _clk.getTime() < target_t:
+                pass
+            win.flip()
+        return
+
+    # ── Jittered inter-flash-interval implementation ───────────────────
+    nominal_period_s = 1.0 / float(freq)
+    n_flashes = int(round(dur / nominal_period_s))
+    rng = rng or random
+    cycle_frames, periods_s = build_jittered_cycle_frames(
+        n_flashes, nominal_period_s, refresh_hz, JITTER_FRACTION, JITTER_MODE, rng)
+    print(f'[JITTER] {freq} Hz block: {n_flashes} flashes, intervals ranged '
+          f'{min(periods_s)*1000:.1f}-{max(periods_s)*1000:.1f} ms '
+          f'(nominal {nominal_period_s*1000:.1f} ms, mode={JITTER_MODE})')
+
     frame_period = 1.0 / refresh_hz
     t_start = _clk.getTime()
-
-    for frame_n in range(total_frames):
-        check_esc(win, subj, ses, day, run)
-        phase = frame_n % frames_per_cycle
-        if phase < half_cycle_frames:
-            for s in stims_to_draw:
-                s.draw()
-        target_t = t_start + (frame_n + 1) * frame_period
-        while _clk.getTime() < target_t:
-            pass
-        win.flip()
+    frame_n = 0
+    for n_cycle_frames in cycle_frames:
+        half_cycle_frames = n_cycle_frames / 2.0
+        for i in range(n_cycle_frames):
+            check_esc(win, subj, ses, day, run)
+            if i < half_cycle_frames:
+                for s in stims_to_draw:
+                    s.draw()
+            target_t = t_start + (frame_n + 1) * frame_period
+            while _clk.getTime() < target_t:
+                pass
+            win.flip()
+            frame_n += 1
 
 # ── MAIN EXPERIMENT ───────────────────────────────────────────────────────────
 def run_flashing():
     subj, run, ses, day, image_name = prompt_info()
     init_serial()
     init_log(subj, ses, day, run)
+    jitter_rng = random.Random(JITTER_SEED)  # dedicated RNG so jitter doesn't disturb other random use
 
     # Setup Window — use the true detected native resolution instead of a
     # hardcoded 16:9 size, so nothing gets letterboxed on the 16:10 panel.
@@ -380,7 +464,7 @@ def run_flashing():
             event_label='flash_onset', onset=t_flash, duration=dur)
 
         # ── Flashing Block (e.g. 8 Hz for 5s) ─────────────────────────
-        wait_flash(win, stims_to_flash, freq, dur, refresh_hz, subj, ses, day, run)
+        wait_flash(win, stims_to_flash, freq, dur, refresh_hz, subj, ses, day, run, rng=jitter_rng)
 
         log(subj, ses, day, run, block_num=idx, frequency_hz=freq, image_name=image_name,
             event_label='flash_offset', onset=_clk.getTime())
