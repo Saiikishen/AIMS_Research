@@ -31,6 +31,9 @@ FALLBACK_SCREEN_SIZE = [1920, 1200]
 OUTPUT_DIR    = 'data'
 IMAGE_DIR     = 'data'
 
+# Flashing Color Configuration (HEX or named color). Use '#FFDCA8' for a warm tone, or 'white' for pure white.
+FLASH_COLOR   = '#848eb5'
+
 # Flashing Sequence Configuration: list of (frequency_in_Hz, duration_in_seconds)
 FREQ_SEQUENCE = [
     (8, 20.0),   
@@ -88,8 +91,7 @@ def prompt_info():
     # if not dlg.OK:
     #     core.quit()
     # return (str(data[0]).strip(), str(data[1]).strip(),
-    #         str(data[2]).strip(), str(data[3]).strip(), str(data[4]).strip())
-    
+    #         str(data[2]).strip(), str(data[3]).strip(), str(data[4]).strip())    
     # Bypassing the GUI dialogue box as requested
     return ('S01', '1', '1', '1', 'blank-white-screen.png')
 
@@ -299,16 +301,16 @@ def run_flashing():
                 break
 
     if "blank-white-screen.png" in image_name:
-        print("[STIMULUS] Using full screen white rectangle instead of blank-white-screen.png for performance.")
-        rect_stim = visual.Rect(win, units='norm', width=2.0, height=2.0, pos=(0, 0), fillColor='white', lineColor='white')
+        print(f"[STIMULUS] Using full screen rectangle ({FLASH_COLOR}) instead of blank-white-screen.png for performance.")
+        rect_stim = visual.Rect(win, units='norm', width=2.0, height=2.0, pos=(0, 0), fillColor=FLASH_COLOR, lineColor=FLASH_COLOR)
         stims_to_flash = [rect_stim]
     elif os.path.exists(img_path):
         print(f"[STIMULUS] Loaded image from {img_path} (Full Screen Mode)")
         img_stim.setImage(img_path)
         stims_to_flash = [img_stim]
     else:
-        print(f"[STIMULUS WARNING] Image '{image_name}' not found. Using full screen white rectangle instead.")
-        rect_stim = visual.Rect(win, units='norm', width=2.0, height=2.0, pos=(0, 0), fillColor='white', lineColor='white')
+        print(f"[STIMULUS WARNING] Image '{image_name}' not found. Using full screen rectangle ({FLASH_COLOR}) instead.")
+        rect_stim = visual.Rect(win, units='norm', width=2.0, height=2.0, pos=(0, 0), fillColor=FLASH_COLOR, lineColor=FLASH_COLOR)
         stims_to_flash = [rect_stim]
 
     # ── 1. Welcome Screen ─────────────────────────────────────────────────
