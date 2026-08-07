@@ -32,7 +32,7 @@ OUTPUT_DIR    = 'data'
 IMAGE_DIR     = 'data'
 
 # Flashing Color Configuration (HEX or named color). Use '#FFDCA8' for a warm tone, or 'white' for pure white.
-FLASH_COLOR   = '#848eb5'
+FLASH_COLOR   = '#babfe0'
 
 # Flashing Sequence Configuration: list of (frequency_in_Hz, duration_in_seconds)
 FREQ_SEQUENCE = [
