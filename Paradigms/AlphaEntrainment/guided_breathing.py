@@ -156,7 +156,7 @@ def run_breathing():
 
     # ── INSTRUCTION SCREEN ────────────────────────────────────────────────────
     hold_line = (
-        f"  HOLD BREATH ( {HOLD_DUR:.0f} s )  -->  circle holds\n"
+        f"  HOLD BREATH ( {HOLD_DUR:.0f} s )  : circle holds\n"
         "  The circle stays full while you hold.\n\n"
     ) if HOLD_DUR > 0 else ''
 
