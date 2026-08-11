@@ -28,21 +28,21 @@ import os
 import sys
 
 # ── CONFIGURATION ─────────────────────────────────────────────────────────────
-INHALE_DUR        = 3.0       # seconds for breathe-IN  phase
-HOLD_DUR          = 2.0       # seconds for hold-breath phase (set 0 to skip)
-EXHALE_DUR        = 9.0       # seconds for breathe-OUT phase
+INHALE_DUR        = 4.0       # seconds for breathe-IN  phase
+HOLD_DUR          = 0.0       # seconds for hold-breath phase (set 0 to skip)
+EXHALE_DUR        = 6.0       # seconds for breathe-OUT phase
 NUM_CYCLES        = 5         # number of complete breath cycles (0 = infinite)
 FULLSCREEN        = True
 
 # ── FLASH FREQUENCIES (Hz) ───────────────────────────────────────────────────
-FLASH_HZ_INHALE   = 8.0      # flicker rate during inhale
-FLASH_HZ_HOLD     = 8.0      # flicker rate during hold
-FLASH_HZ_EXHALE   = 8.0      # flicker rate during exhale
+FLASH_HZ_INHALE   = 10.0      # flicker rate during inhale
+FLASH_HZ_HOLD     = 10.0      # flicker rate during hold
+FLASH_HZ_EXHALE   = 10.0      # flicker rate during exhale
 
 # ── FLASH COLOURS ─────────────────────────────────────────────────────────────
 FLASH_COLOR_INHALE  = '#5b8cff'   # cool blue   -- breath in
-FLASH_COLOR_HOLD    = '#f0c040'   # warm gold   -- hold breath
-FLASH_COLOR_EXHALE  = '#a05ddc'   # soft violet -- breath out
+FLASH_COLOR_HOLD    = '#5b8cff'   # warm gold   -- hold breath
+FLASH_COLOR_EXHALE  = '#5b8cff'   # soft violet -- breath out
 BG_COLOR            = '#0d0d1a'   # background / OFF colour
 
 # ── SCREEN REFRESH (fallback if measurement fails) ───────────────────────────

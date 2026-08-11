@@ -24,9 +24,9 @@ import sys
 import math
 
 # ── CONFIGURATION ─────────────────────────────────────────────────────────────
-INHALE_DUR        = 3.0       # seconds for breathe-IN  phase
-HOLD_DUR          = 2.0       # seconds for hold-breath phase (set 0 to skip)
-EXHALE_DUR        = 9.0       # seconds for breathe-OUT phase
+INHALE_DUR        = 4.0       # seconds for breathe-IN  phase
+HOLD_DUR          = 0.0       # seconds for hold-breath phase (set 0 to skip)
+EXHALE_DUR        = 6.0       # seconds for breathe-OUT phase
 NUM_CYCLES        = 5         # number of complete breath cycles (0 = infinite)
 FULLSCREEN        = True
 
