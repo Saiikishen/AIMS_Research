@@ -56,17 +56,18 @@ def format_timestamp(value):
         return value.strftime("%H:%M:%S")
     if isinstance(value, date):
         return value.strftime("%Y-%m-%d")
-    return str(value).strip()
+    val_str = str(value)
+    # Remove 'd1' or 'd2' (case-insensitive) from the string
+    val_str = re.sub(r'(?i)d[12]', '', val_str).strip()
+    return val_str
 
 
-def format_current(number_str, unit):
-    """Turn '2.0' -> '2', '6.5' -> '6.5', and pair it with the unit."""
+def format_current(number_str):
+    """Turn '2.0' -> 2, '6.5' -> 6.5."""
     num = float(number_str)
     if num.is_integer():
-        num_str = str(int(num))
-    else:
-        num_str = str(num)
-    return f"{num_str} {unit}"
+        return int(num)
+    return num
 
 
 def extract_rows(sheet):
@@ -94,7 +95,8 @@ def extract_rows(sheet):
                 format_timestamp(timestamp_cell.value),
                 elec1,
                 elec2,
-                format_current(current_num, unit),
+                format_current(current_num),
+                unit,
             ]
         )
     return cleaned
@@ -109,7 +111,7 @@ def clean_file(input_path: Path, output_path: Path):
     out_wb = Workbook()
     out_sheet = out_wb.active
     out_sheet.title = "Cleaned"
-    out_sheet.append(["Timestamp", "Electrode 1", "Electrode 2", "Current"])
+    out_sheet.append(["Timestamp", "Electrode 1", "Electrode 2", "Current", "Unit"])
     for r in cleaned_rows:
         out_sheet.append(r)
 
