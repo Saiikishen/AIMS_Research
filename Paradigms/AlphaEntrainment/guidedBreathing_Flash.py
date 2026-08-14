@@ -133,7 +133,8 @@ def run_breathing_flash():
     # Late imports
     try:
         from psychopy import visual, core, event, sound, prefs
-        prefs.hardware['audioLib'] = ['pygame', 'sounddevice', 'ptb']
+        prefs.hardware['audioLib'] = ['ptb', 'sounddevice', 'pygame']
+        prefs.hardware['audioDevice'] = ['Speakers (Realtek(R) Audio)', 'default']
     except ImportError:
         print('[ERROR] PsychoPy is required. Install via:  pip install psychopy')
         sys.exit(1)
