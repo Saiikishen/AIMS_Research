@@ -44,7 +44,7 @@ FREQ_SEQUENCE = [
 ]
 
 DELAY_DUR           = 9.5   # 9.5s delay in between switching frequencies
-FIXATION_DUR        = 5.0   # 5.0s initial pre-stimulus fixation before the first flash block
+FIXATION_DUR        = 60.0   # 60.0s initial pre-stimulus fixation before the first flash block
 WELCOME_DUR         = 1.0   # 1.0s initial welcome display
 GOODBYE_DUR         = 1.0   # 1.0s goodbye screen
 FREQ_ANNOUNCE_DUR   = 2.0   # 2.0s display showing what frequency is about to be flashed

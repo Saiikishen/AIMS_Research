@@ -135,35 +135,35 @@ def run_base_alpha():
         msg_open.draw()
         win.flip()
 
-    # ── 2. White screen for 10 sec, countdown starts at 7th sec ──
+    # ── 2. White screen for 65 sec, countdown starts at 62nd sec ──
     clk.reset()
-    while clk.getTime() < 15.0:
+    while clk.getTime() < 65.0:
         check_esc(win)
         white_bg.draw()
         
         t = clk.getTime()
-        if 12.0 <= t < 13.0:
+        if 62.0 <= t < 63.0:
             msg_countdown.text = "Close your eyes in 3"
             msg_countdown.draw()
-        elif 13.0 <= t < 14.0:
+        elif 63.0 <= t < 64.0:
             msg_countdown.text = "Close your eyes in 2"
             msg_countdown.draw()
-        elif 14.0 <= t < 15.0:
+        elif 64.0 <= t < 65.0:
             msg_countdown.text = "Close your eyes in 1"
             msg_countdown.draw()
             
         win.flip()
 
-    # ── 3. At 10th sec, send beep and trigger ──
+    # ── 3. At 65th sec, send beep and trigger ──
     win.flip() # Clear screen to black while eyes are closed
     play_close_beep()
     
     # TRIGGER 2: When the beep sound to close eyes is produced
     send_ttl() 
 
-    # ── 4. Wait 10 seconds of eyes closed ──
+    # ── 4. Wait 65 seconds of eyes closed ──
     clk.reset()
-    while clk.getTime() < 15.0:
+    while clk.getTime() < 65.0:
         check_esc(win)
         win.flip()
 
