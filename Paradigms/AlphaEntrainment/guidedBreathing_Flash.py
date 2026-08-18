@@ -1,37 +1,57 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-Guided Breathing + Full-Screen Flash Paradigm
-===============================================
-Same breathing phases as guided_breathing.py, but instead of an animated
-circle the entire screen flashes a solid color in a square-wave pattern.
-
-Phases (each with a distinct flash color):
-  - Breathe IN   ( INHALE_DUR s )  ->  FLASH_COLOR_INHALE  flashes  /  'OM'  plays
-  - Hold Breath  ( HOLD_DUR   s )  ->  FLASH_COLOR_HOLD    flashes  (no audio)
-  - Breathe OUT  ( EXHALE_DUR s )  ->  FLASH_COLOR_EXHALE  flashes  /  'MAA' plays
-
-Nothing is shown on-screen during the exercise except the flashing rectangle.
-A full instruction page is displayed before the exercise begins.
-
-Features
---------
-1. Full-screen instruction page (SPACE to start, ESC to quit).
-2. Frame-locked square-wave (ON/OFF) colour flashing -- same engine as white_flash.py.
-3. Separate configurable flash colours and Hz for each phase.
-4. External audio files (OM for inhale, MAA for exhale).
-5. Set HOLD_DUR = 0 to skip the hold phase entirely.
-6. Press ESC at any time to exit cleanly.
-"""
-
 import os
 import sys
+import time
+
+try:
+    import serial, serial.serialutil
+    SERIAL_AVAILABLE = True
+except ImportError:
+    SERIAL_AVAILABLE = False
+
+# ── HARDWARE & CONFIG ─────────────────────────────────────────────────────────
+SERIAL_PORT   = 'COM5'
+BAUD_RATE     = 115200
+
+# ── SERIAL TRIGGER ────────────────────────────────────────────────────────────
+_ser = None
+
+def init_serial():
+    global _ser
+    if not SERIAL_AVAILABLE:
+        print('[TTL] NO-TRIGGER mode (serial library not installed)')
+        return
+    try:
+        _ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
+        time.sleep(0.1)
+        print(f'[TTL] {SERIAL_PORT} opened successfully')
+    except serial.serialutil.SerialException as e:
+        print(f'[TTL WARNING] Could not open {SERIAL_PORT}: {e}')
+        _ser = None
+
+def send_ttl():
+    global _ser
+    if _ser:
+        try:
+            _ser.write(b'\x01')
+            print('[TTL] Trigger successfully sent')
+        except Exception as e:
+            print(f'[TTL ERROR] Failed to send trigger: {e}')
+    else:
+        print('[TTL] (Simulation) Trigger successfully sent')
+
+def close_serial():
+    if _ser:
+        try:
+            _ser.close()
+        except Exception:
+            pass
 
 # ── CONFIGURATION ─────────────────────────────────────────────────────────────
 INHALE_DUR        = 4.0       # seconds for breathe-IN  phase
 HOLD_DUR          = 0.0       # seconds for hold-breath phase (set 0 to skip)
 EXHALE_DUR        = 6.0       # seconds for breathe-OUT phase
-NUM_CYCLES        = 5         # number of complete breath cycles (0 = infinite)
+NUM_CYCLES        = 25        # number of complete breath cycles (0 = infinite)
 FULLSCREEN        = True
 
 # ── FLASH FREQUENCIES (Hz) ───────────────────────────────────────────────────
@@ -50,10 +70,8 @@ NOMINAL_REFRESH_HZ  = 120.0
 MIN_PLAUSIBLE_HZ    = 30.0
 MAX_PLAUSIBLE_HZ    = 300.0
 
-# ── AUDIO FILES ───────────────────────────────────────────────────────────────
-# Place your audio files in the same directory as this script (or provide
-# absolute paths).  Supported formats: WAV, MP3, OGG, FLAC.
-OM_AUDIO   = r'C:\Users\saiik\OneDrive\Documents\GitHub\AIMS_Research\Paradigms\AlphaEntrainment\Audio\Om.wav'    # played during the INHALE phase
+
+OM_AUDIO   = r'C:\Users\saiik\OneDrive\Documents\GitHub\AIMS_Research\Paradigms\AlphaEntrainment\Audio\Om.wav'    
 MAA_AUDIO  = r'C:\Users\saiik\OneDrive\Documents\GitHub\AIMS_Research\Paradigms\AlphaEntrainment\Audio\MAA.wav'
 # ── INSTRUCTION SCREEN COLOURS ────────────────────────────────────────────────
 INSTRUCTION_COLOR = '#d0e8ff'
@@ -70,6 +88,7 @@ def measure_refresh_rate(win, fallback_hz=NOMINAL_REFRESH_HZ):
     (e.g. from a GPU driver that does not honour vsync) and falls back to the
     confirmed panel spec instead.
     """
+    # pyrefly: ignore [missing-import]
     from psychopy import core as _core
     print('[DISPLAY] Measuring actual monitor refresh rate (please wait)...')
     measured = win.getActualFrameRate(nIdentical=10, nMaxFrames=120,
@@ -84,13 +103,7 @@ def measure_refresh_rate(win, fallback_hz=NOMINAL_REFRESH_HZ):
 
 def flash_phase(win, rect, flash_hz, duration_s, refresh_hz, clk, event,
                 snd=None, audio_ok=False):
-    """
-    Run a frame-locked square-wave flash for `duration_s` seconds.
-    The rectangle `rect` is drawn every ON frame; the window is cleared on
-    OFF frames.  Audio `snd` is started at the beginning if provided.
-
-    Returns True normally, False if ESC was pressed (caller should quit).
-    """
+ 
     frames_per_cycle  = refresh_hz / flash_hz
     half_cycle_frames = frames_per_cycle / 2.0
     total_frames      = int(round(duration_s * refresh_hz))
@@ -130,11 +143,14 @@ def flash_phase(win, rect, flash_hz, duration_s, refresh_hz, clk, event,
 # ==============================================================================
 
 def run_breathing_flash():
+    init_serial()
+
     # Late imports
     try:
+        # pyrefly: ignore [missing-import]
         from psychopy import visual, core, event, sound, prefs
         prefs.hardware['audioLib'] = ['ptb', 'sounddevice', 'pygame']
-        prefs.hardware['audioDevice'] = ['Speakers (Realtek(R) Audio)', 'default']
+        prefs.hardware['audioDevice'] = ['Headphones (HBTS004)', 'default']
     except ImportError:
         print('[ERROR] PsychoPy is required. Install via:  pip install psychopy')
         sys.exit(1)
@@ -244,6 +260,7 @@ def run_breathing_flash():
     waiting = True
     while waiting:
         if event.getKeys(['escape']):
+            close_serial()
             win.close()
             core.quit()
         header_rect.draw()
@@ -268,6 +285,9 @@ def run_breathing_flash():
         cycle += 1
         print(f'[CYCLE {cycle}] Starting cycle {cycle} of {NUM_CYCLES}')
 
+        # Send trigger at the beginning of each cycle
+        send_ttl()
+
         # ── INHALE PHASE ───────────────────────────────────────────────────────
         print(f'[INHALE] {INHALE_DUR}s at {FLASH_HZ_INHALE} Hz')
         rect.fillColor  = FLASH_COLOR_INHALE
@@ -279,6 +299,7 @@ def run_breathing_flash():
             if audio_ok:
                 snd_om.stop()
                 snd_maa.stop()
+            close_serial()
             win.close()
             core.quit()
 
@@ -294,6 +315,7 @@ def run_breathing_flash():
                 if audio_ok:
                     snd_om.stop()
                     snd_maa.stop()
+                close_serial()
                 win.close()
                 core.quit()
 
@@ -308,6 +330,7 @@ def run_breathing_flash():
             if audio_ok:
                 snd_om.stop()
                 snd_maa.stop()
+            close_serial()
             win.close()
             core.quit()
 
@@ -337,6 +360,8 @@ def run_breathing_flash():
         win.flip()
 
     # ── Cleanup ────────────────────────────────────────────────────────────────
+    close_serial()
+
     win.close()
     core.quit()
 

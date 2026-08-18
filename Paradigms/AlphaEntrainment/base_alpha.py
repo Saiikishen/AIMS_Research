@@ -15,7 +15,7 @@ except ImportError:
     SERIAL_AVAILABLE = False
 
 # ── HARDWARE & CONFIG ─────────────────────────────────────────────────────────
-SERIAL_PORT   = 'COM3'
+SERIAL_PORT   = 'COM5'
 BAUD_RATE     = 115200
 FULLSCREEN    = True
 FALLBACK_SCREEN_SIZE = [1920, 1200]
@@ -90,8 +90,8 @@ def run_base_alpha():
 
     # Visual stimuli
     msg_open = visual.TextStim(win, text="Keep your eyes open till you hear a sound", height=0.05, color='white')
-    white_bg = visual.Rect(win, width=2.0, height=2.0, fillColor='white', lineColor='white')
-    msg_countdown = visual.TextStim(win, text="", height=0.1, color='black')
+    fixation = visual.TextStim(win, text="+", height=0.08, color='white')
+    msg_countdown = visual.TextStim(win, text="", height=0.08, color='white')
 
     # Audio setup (Native Windows audio to bypass PsychoPy virtual driver conflicts)
     import sys
@@ -135,11 +135,10 @@ def run_base_alpha():
         msg_open.draw()
         win.flip()
 
-    # ── 2. White screen for 65 sec, countdown starts at 62nd sec ──
+    # ── 2. Black screen with fixation point for 65 sec, countdown starts at 62nd sec ──
     clk.reset()
     while clk.getTime() < 65.0:
         check_esc(win)
-        white_bg.draw()
         
         t = clk.getTime()
         if 62.0 <= t < 63.0:
@@ -151,6 +150,8 @@ def run_base_alpha():
         elif 64.0 <= t < 65.0:
             msg_countdown.text = "Close your eyes in 1"
             msg_countdown.draw()
+        else:
+            fixation.draw()
             
         win.flip()
 
