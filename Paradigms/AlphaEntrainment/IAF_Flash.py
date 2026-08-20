@@ -1,16 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-FEATURES
---------
-1. Flashes an image at varying frequencies (default: 8 Hz for 5s -> 12 Hz for 5s -> 9 Hz for 5s).
-2. Includes a 3-second delay (inter-block interval with fixation cross) between switching frequencies.
-3. Sends hardware TTL trigger (0x01) via COM3 every time just before each flashing block begins, exactly like `object_naming.py`.
-4. Prints confirmation to console every time a trigger is successfully sent.
-5. Logs exact calendar date/time timestamps and event durations down to the microsecond.
-6. Robust square-wave (ON/OFF) frame-by-frame rendering loop prevents screen glitches and accurate frequency modulation across any screen refresh rate.
 
-"""
 
 import os, csv, time, random, re
 from datetime import datetime

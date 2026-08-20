@@ -1,37 +1,3 @@
-"""
-Individual Alpha Frequency (IAF) analysis pipeline
-====================================================
-
-Computes the Individual Alpha Frequency (IAF) from a manually-selected,
-pre-vetted 60 s eyes-closed EEG interval, using a posterior ROI
-(O1, Oz, O2). The eyes-open interval is processed separately and is
-used only for quality control / baseline reference — it never gates
-IAF validity.
-
-Assumptions (per current protocol simplification):
-  - You have already visually identified clean eyes-open and
-    eyes-closed time windows in the recording (>= 45 s clean for
-    eyes-closed) — no automated artifact rejection is performed here.
-  - O1 and O2 are re-derived as bipolar channels against Cz
-    (O1-Cz, O2-Cz). Oz is used as-recorded unless you add it to
-    REREFERENCE_CHANNELS below.
-
-Extensibility hooks (not active by default):
-  - CHANNEL_QUALITY_LOG below is where rejected/replacement posterior
-    channels get logged. If a posterior channel needs to be dropped,
-    add frontal electrodes as replacements, or wire in an EOG channel
-    to regress out the ocular ERP, that logic slots in around
-    `rereference_to_channel()` / `channel_quality_log()`.
-
-Usage:
-  1. Edit the CONFIG block below with your EDF path, manually chosen
-     eyes-open / eyes-closed time windows (seconds from recording
-     start), and channel names as they appear in your file.
-  2. Run: python iaf_analysis.py
-  3. Outputs land in OUTPUT_DIR: iaf_summary.json (all numeric
-     results) + PSD plots for both conditions.
-"""
-
 import json
 from pathlib import Path
 
@@ -44,18 +10,16 @@ import numpy as np
 # pyrefly: ignore [missing-import]
 from scipy.signal import welch
 
-# ============================================================
-# CONFIG — edit these for each recording / visit
-# ============================================================
 
-EDF_PATH = r"C:\Users\saiik\Downloads\DEMO~ DEMO_e07e94ca-0473-4eea-ae25-89eb2e235335.edf"
+
+EDF_PATH = r"C:\Users\saiik\Downloads\VYKHARI\SUB-2VYKHARI~ _b2102c63-2618-414e-8b1c-e90e7b171048.edf"
 
 # Manually inspected clean windows (seconds from recording start)
-EYES_CLOSED_TMIN = 63.0
-EYES_CLOSED_TMAX = 123.0   # aim for 60 s; must be >= MIN_CLEAN_EYES_CLOSED_SEC
+EYES_CLOSED_TMIN = 73.0
+EYES_CLOSED_TMAX = 133.0   # aim for 60 s; must be >= MIN_CLEAN_EYES_CLOSED_SEC
 
-EYES_OPEN_TMIN = 1.0
-EYES_OPEN_TMAX = 61.0
+EYES_OPEN_TMIN = 5.0
+EYES_OPEN_TMAX = 70.0
 
 # Optional repeat attempt if the first eyes-closed segment is invalid
 # (protocol: repeat the 60 s eyes-closed recording once, else exclude).

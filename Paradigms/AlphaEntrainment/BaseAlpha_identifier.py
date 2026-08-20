@@ -108,7 +108,7 @@ def run_base_alpha():
 
     def play_close_beep():
         if is_windows:
-            winsound.Beep(800, 200) # 800 Hz, 200 ms
+            winsound.Beep(1000, 600) # 1000 Hz, 600 ms for a loud and clear beep
         else:
             beep.play()
 
