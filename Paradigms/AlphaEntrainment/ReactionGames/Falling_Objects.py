@@ -24,7 +24,7 @@ MAX_SPAWN_GAP = 0.9        # max seconds between object spawns
 RED_PROBABILITY = 0.3       # chance any given spawned object is red (target)
 FRAME_INTERVAL_MS = 50      # ~33 FPS movement update
 HIT_TOLERANCE = 1.3         # multiplier on radius for a forgiving tap hitbox
-GRACE_PERIOD_S = 0.15       # seconds after object leaves screen where a tap still counts
+GRACE_PERIOD_S = 0.10       # seconds after object leaves screen where a tap still counts
 CSV_EVENTS_FILENAME = "falling_object_tap_test_events.csv"
 CSV_SUMMARY_FILENAME = "falling_object_tap_test_summary.csv"
 
