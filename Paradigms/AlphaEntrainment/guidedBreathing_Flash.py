@@ -55,9 +55,9 @@ NUM_CYCLES        = 25        # number of complete breath cycles (0 = infinite)
 FULLSCREEN        = True
 
 # ── FLASH FREQUENCIES (Hz) ───────────────────────────────────────────────────
-FLASH_HZ_INHALE   = 10.7    # flicker rate during inhale
-FLASH_HZ_HOLD     = 10.7      # flicker rate during hold
-FLASH_HZ_EXHALE   = 10.7      # flicker rate during exhale
+FLASH_HZ_INHALE   = 10.4    # flicker rate during inhale
+FLASH_HZ_HOLD     = 10.4      # flicker rate during hold
+FLASH_HZ_EXHALE   = 10.4      # flicker rate during exhale
 
 # ── FLASH COLOURS ─────────────────────────────────────────────────────────────
 FLASH_COLOR_INHALE  = '#5b8cff'   # cool blue   -- breath in

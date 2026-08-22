@@ -12,14 +12,14 @@ from scipy.signal import welch
 
 
 
-EDF_PATH = r"C:\Users\saiik\Downloads\VYKHARI\SUB-2VYKHARI~ _b2102c63-2618-414e-8b1c-e90e7b171048.edf"
+EDF_PATH = r"C:\Users\saiik\Downloads\DEMO~ DEMO_1e3d6b23-bdba-4184-bdad-f8ccffbf058d.edf"
 
 # Manually inspected clean windows (seconds from recording start)
-EYES_CLOSED_TMIN = 73.0
-EYES_CLOSED_TMAX = 133.0   # aim for 60 s; must be >= MIN_CLEAN_EYES_CLOSED_SEC
+EYES_CLOSED_TMIN = 2
+EYES_CLOSED_TMAX = 61  # aim for 60 s; must be >= MIN_CLEAN_EYES_CLOSED_SEC
 
-EYES_OPEN_TMIN = 5.0
-EYES_OPEN_TMAX = 70.0
+EYES_OPEN_TMIN = 65
+EYES_OPEN_TMAX = 121
 
 # Optional repeat attempt if the first eyes-closed segment is invalid
 # (protocol: repeat the 60 s eyes-closed recording once, else exclude).
@@ -27,9 +27,9 @@ EYES_OPEN_TMAX = 70.0
 RETRY_EYES_CLOSED_TMIN = None
 RETRY_EYES_CLOSED_TMAX = None
 
-REFERENCE_CHANNEL = "Cz"
-REREFERENCE_CHANNELS = ["O1", "O2"]   # re-derived as (channel - Cz)
-POSTERIOR_ROI = ["O1", "Oz", "O2"]    # Oz used as-recorded unless also
+REFERENCE_CHANNEL = "Fz"
+REREFERENCE_CHANNELS = ["O1","O2"]   # re-derived as (channel - Cz)
+POSTERIOR_ROI = ["O1", "O2"]    # Oz used as-recorded unless also
                                        # added to REREFERENCE_CHANNELS
 
 BANDPASS = (1.0, 40.0)
@@ -43,7 +43,7 @@ ALPHA_SEARCH_BAND = (7.0, 13.0)
 CROSS_CHANNEL_TOL_HZ = 0.5
 MIN_COMPATIBLE_CHANNELS = 2
 
-OUTPUT_DIR = "iaf_results"
+OUTPUT_DIR = r"C:\Users\saiik\Downloads\IAF Data"
 
 # ============================================================
 # Pipeline
@@ -63,6 +63,10 @@ def rereference_to_channel(raw, channels, ref_channel):
     new derivation (mne requires this to reuse the same channel name).
     Everything outside `channels` and `ref_channel` is untouched."""
     raw = raw.copy()
+    if not ref_channel:
+        print("[INFO] Re-referencing disabled (REFERENCE_CHANNEL is empty/None). Using as-recorded hardware reference.")
+        return raw
+        
     present = [ch for ch in channels if ch in raw.ch_names]
     missing = [ch for ch in channels if ch not in raw.ch_names]
     if missing:

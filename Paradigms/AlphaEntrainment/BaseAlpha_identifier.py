@@ -4,7 +4,7 @@
 import os, time
 # pyrefly: ignore [missing-import]
 from psychopy import prefs
-prefs.hardware['audioLib'] = ['sounddevice', 'PTB', 'pyo', 'pygame']
+prefs.hardware['audioDevice'] = ['Headphones (HBTS004)', 'default']
 # pyrefly: ignore [missing-import]
 from psychopy import visual, core, event, sound
 
@@ -93,34 +93,20 @@ def run_base_alpha():
     fixation = visual.TextStim(win, text="+", height=0.08, color='white')
     msg_countdown = visual.TextStim(win, text="", height=0.08, color='white')
 
-    # Audio setup (Native Windows audio to bypass PsychoPy virtual driver conflicts)
-    import sys
-    is_windows = sys.platform == 'win32'
-    if is_windows:
-        import winsound
-    else:
-        # Fallback for Mac/Linux
-        beep = sound.Sound(value='C', octave=6, secs=0.2, volume=1.0)
-        try:
-            open_eyes_audio = sound.Sound('open_eyes.wav')
-        except Exception:
-            open_eyes_audio = sound.Sound(value='G', octave=4, secs=0.5, volume=1.0)
+    # Audio setup using PsychoPy's sound engine
+    beep = sound.Sound(value='C', octave=6, secs=0.6, volume=1.0)
+    try:
+        open_eyes_audio = sound.Sound('open_eyes.wav')
+    except Exception:
+        open_eyes_audio = sound.Sound(value='G', octave=5, secs=0.6, volume=1.0)
 
     def play_close_beep():
-        if is_windows:
-            winsound.Beep(1000, 600) # 1000 Hz, 600 ms for a loud and clear beep
-        else:
-            beep.play()
+        beep.play()
 
     def play_open_audio():
-        if is_windows:
-            if os.path.exists('open_eyes.wav'):
-                winsound.PlaySound('open_eyes.wav', winsound.SND_FILENAME | winsound.SND_ASYNC)
-            else:
-                print("[AUDIO WARNING] 'open_eyes.wav' not found. Using fallback tone.")
-                winsound.Beep(400, 500)
-        else:
-            open_eyes_audio.play()
+        if not os.path.exists('open_eyes.wav'):
+            print("[AUDIO WARNING] 'open_eyes.wav' not found. Using fallback tone.")
+        open_eyes_audio.play()
 
     # ── 1. Show "Keep your eyes open till you hear a sound" for 5 sec ──
     msg_open.draw()
