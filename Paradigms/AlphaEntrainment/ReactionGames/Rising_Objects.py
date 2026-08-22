@@ -18,23 +18,23 @@ TEST_DURATION = 40.0        # seconds, total test length
 CANVAS_WIDTH = 800
 CANVAS_HEIGHT = 600
 OBJECT_RADIUS = 25
-FALL_DURATION = 3.0         # seconds for an object to fall top -> bottom
+RISE_DURATION = 3.0         # seconds for an object to rise bottom -> top
 MIN_SPAWN_GAP = 0.5         # min seconds between object spawns
 MAX_SPAWN_GAP = 0.9        # max seconds between object spawns
 RED_PROBABILITY = 0.3       # chance any given spawned object is red (target)
 FRAME_INTERVAL_MS = 50      # ~33 FPS movement update
 HIT_TOLERANCE = 1.3         # multiplier on radius for a forgiving tap hitbox
 GRACE_PERIOD_S = 0.15       # seconds after object leaves screen where a tap still counts
-CSV_EVENTS_FILENAME = "falling_object_tap_test_events.csv"
-CSV_SUMMARY_FILENAME = "falling_object_tap_test_summary.csv"
+CSV_EVENTS_FILENAME = "rising_object_tap_test_events.csv"
+CSV_SUMMARY_FILENAME = "rising_object_tap_test_summary.csv"
 
-FALL_SPEED = CANVAS_HEIGHT / FALL_DURATION  # pixels per second
+RISE_SPEED = CANVAS_HEIGHT / RISE_DURATION  # pixels per second
 
 
-class FallingObjectTapTest:
+class RisingObjectTapTest:
     def __init__(self, root):
         self.root = root
-        self.root.title("Falling Object Tap Test")
+        self.root.title("Rising Object Tap Test")
         self.root.geometry(f"{CANVAS_WIDTH + 40}x{CANVAS_HEIGHT + 140}")
         self.root.resizable(False, False)
         self.root.withdraw()
@@ -120,8 +120,8 @@ class FallingObjectTapTest:
             self.spawn_object()
             self.next_spawn_time = elapsed + random.uniform(MIN_SPAWN_GAP, MAX_SPAWN_GAP)
 
-        # Move every active object down; remove + score any that fell off-screen
-        dy = FALL_SPEED * (FRAME_INTERVAL_MS / 1000.0)
+        # Move every active object up; remove + score any that rose off-screen
+        dy = -RISE_SPEED * (FRAME_INTERVAL_MS / 1000.0)
         current_time = time.time()
         for item_id in list(self.active_objects.keys()):
             self.canvas.move(item_id, 0, dy)
@@ -129,7 +129,7 @@ class FallingObjectTapTest:
             if not coords:
                 continue
             x0, y0, x1, y1 = coords
-            if y0 > CANVAS_HEIGHT:
+            if y1 < 0:
                 obj = self.active_objects.pop(item_id)
                 cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
                 self.canvas.delete(item_id)
@@ -161,7 +161,7 @@ class FallingObjectTapTest:
         x = random.randint(OBJECT_RADIUS, CANVAS_WIDTH - OBJECT_RADIUS)
         color = "red" if random.random() < RED_PROBABILITY else "black"
         item_id = self.canvas.create_oval(
-            x - OBJECT_RADIUS, -2 * OBJECT_RADIUS, x + OBJECT_RADIUS, 0,
+            x - OBJECT_RADIUS, CANVAS_HEIGHT, x + OBJECT_RADIUS, CANVAS_HEIGHT + 2 * OBJECT_RADIUS,
             fill=color, outline="",
         )
         self.active_objects[item_id] = {"color": color, "spawn_time": time.time()}
@@ -346,5 +346,5 @@ class FallingObjectTapTest:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = FallingObjectTapTest(root)
+    app = RisingObjectTapTest(root)
     root.mainloop()

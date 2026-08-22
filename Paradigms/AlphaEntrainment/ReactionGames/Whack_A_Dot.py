@@ -1,5 +1,3 @@
-
-
 import os
 import sys
 import random
@@ -15,26 +13,24 @@ import csv
 # Configurable test parameters
 # ---------------------------------------------------------------------------
 TEST_DURATION = 40.0        # seconds, total test length
-CANVAS_WIDTH = 800
-CANVAS_HEIGHT = 600
+CANVAS_WIDTH = 300
+CANVAS_HEIGHT = 300
 OBJECT_RADIUS = 25
-FALL_DURATION = 3.0         # seconds for an object to fall top -> bottom
+DOT_DURATION = 0.5       # seconds the dot stays on screen
+GRACE_PERIOD_S = 0.15       # seconds after dot disappears where a tap still counts
 MIN_SPAWN_GAP = 0.5         # min seconds between object spawns
-MAX_SPAWN_GAP = 0.9        # max seconds between object spawns
+MAX_SPAWN_GAP = 0.9         # max seconds between object spawns
 RED_PROBABILITY = 0.3       # chance any given spawned object is red (target)
-FRAME_INTERVAL_MS = 50      # ~33 FPS movement update
-HIT_TOLERANCE = 1.3         # multiplier on radius for a forgiving tap hitbox
-GRACE_PERIOD_S = 0.15       # seconds after object leaves screen where a tap still counts
-CSV_EVENTS_FILENAME = "falling_object_tap_test_events.csv"
-CSV_SUMMARY_FILENAME = "falling_object_tap_test_summary.csv"
-
-FALL_SPEED = CANVAS_HEIGHT / FALL_DURATION  # pixels per second
+FRAME_INTERVAL_MS = 50      # update interval (can be ~30 for responsiveness)
+HIT_TOLERANCE = 1.75         # multiplier on radius for a forgiving tap hitbox
+CSV_EVENTS_FILENAME = "whack_a_dot_events.csv"
+CSV_SUMMARY_FILENAME = "whack_a_dot_summary.csv"
 
 
-class FallingObjectTapTest:
+class WhackADotTest:
     def __init__(self, root):
         self.root = root
-        self.root.title("Falling Object Tap Test")
+        self.root.title("Whack A Dot Test")
         self.root.geometry(f"{CANVAS_WIDTH + 40}x{CANVAS_HEIGHT + 140}")
         self.root.resizable(False, False)
         self.root.withdraw()
@@ -48,7 +44,7 @@ class FallingObjectTapTest:
 
         # Test state
         self.active_objects = {}   # canvas_item_id -> {"color", "spawn_time"}
-        self.recently_expired = {}  # grace buffer: {"color", "spawn_time", "expired_time", "cx", "cy"}
+        self.recently_expired = {}  # {"color", "spawn_time", "expired_time", "cx", "cy"}
         self.events = []           # list of per-object outcome dicts
         self.total_red = 0
         self.total_black = 0
@@ -74,7 +70,7 @@ class FallingObjectTapTest:
 
         self.instruction_label = tk.Label(
             self.root,
-            text="TAP the RED circles only - ignore the black ones",
+            text="TAP the RED dots only - ignore the black ones",
             font=("Arial", 12, "bold"),
             fg="darkred",
         )
@@ -110,7 +106,8 @@ class FallingObjectTapTest:
         if not self.running:
             return
 
-        elapsed = time.time() - self.test_start_time
+        current_time = time.time()
+        elapsed = current_time - self.test_start_time
         if elapsed >= TEST_DURATION:
             self.end_test()
             return
@@ -120,20 +117,19 @@ class FallingObjectTapTest:
             self.spawn_object()
             self.next_spawn_time = elapsed + random.uniform(MIN_SPAWN_GAP, MAX_SPAWN_GAP)
 
-        # Move every active object down; remove + score any that fell off-screen
-        dy = FALL_SPEED * (FRAME_INTERVAL_MS / 1000.0)
-        current_time = time.time()
+        # Check for dots that have expired (stayed longer than DOT_DURATION)
+        # Move them to the grace period buffer instead of immediately logging MISSED
         for item_id in list(self.active_objects.keys()):
-            self.canvas.move(item_id, 0, dy)
-            coords = self.canvas.coords(item_id)
-            if not coords:
-                continue
-            x0, y0, x1, y1 = coords
-            if y0 > CANVAS_HEIGHT:
-                obj = self.active_objects.pop(item_id)
-                cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+            obj = self.active_objects[item_id]
+            if current_time - obj["spawn_time"] >= DOT_DURATION:
+                coords = self.canvas.coords(item_id)
+                cx, cy = 0, 0
+                if coords:
+                    x0, y0, x1, y1 = coords
+                    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
                 self.canvas.delete(item_id)
-                grace_key = id(obj)
+                self.active_objects.pop(item_id)
+                grace_key = id(obj)  # unique key for grace buffer
                 self.recently_expired[grace_key] = {
                     "color": obj["color"],
                     "spawn_time": obj["spawn_time"],
@@ -142,7 +138,7 @@ class FallingObjectTapTest:
                     "cy": cy,
                 }
 
-        # Clean up grace period buffer
+        # Clean up grace period buffer: log MISSED for entries that have fully expired
         for grace_key in list(self.recently_expired.keys()):
             entry = self.recently_expired[grace_key]
             if current_time - entry["expired_time"] >= GRACE_PERIOD_S:
@@ -158,10 +154,13 @@ class FallingObjectTapTest:
         self.root.after(FRAME_INTERVAL_MS, self.update_loop)
 
     def spawn_object(self):
+        # We need to spawn the object fully within the canvas
         x = random.randint(OBJECT_RADIUS, CANVAS_WIDTH - OBJECT_RADIUS)
+        y = random.randint(OBJECT_RADIUS, CANVAS_HEIGHT - OBJECT_RADIUS)
+        
         color = "red" if random.random() < RED_PROBABILITY else "black"
         item_id = self.canvas.create_oval(
-            x - OBJECT_RADIUS, -2 * OBJECT_RADIUS, x + OBJECT_RADIUS, 0,
+            x - OBJECT_RADIUS, y - OBJECT_RADIUS, x + OBJECT_RADIUS, y + OBJECT_RADIUS,
             fill=color, outline="",
         )
         self.active_objects[item_id] = {"color": color, "spawn_time": time.time()}
@@ -183,7 +182,7 @@ class FallingObjectTapTest:
         best_key = None
         best_dist = float('inf')
 
-        # 1) Check all currently visible (active) objects
+        # 1) Check all currently visible (active) dots
         for item_id, obj_data in self.active_objects.items():
             coords = self.canvas.coords(item_id)
             if not coords:
@@ -196,7 +195,7 @@ class FallingObjectTapTest:
                 best_key = item_id
                 best_source = "active"
 
-        # 2) Check recently expired objects (grace period buffer)
+        # 2) Check recently expired dots (grace period buffer)
         for grace_key, entry in self.recently_expired.items():
             cx, cy = entry["cx"], entry["cy"]
             dist = ((event.x - cx) ** 2 + (event.y - cy) ** 2) ** 0.5
@@ -346,5 +345,5 @@ class FallingObjectTapTest:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = FallingObjectTapTest(root)
+    app = WhackADotTest(root)
     root.mainloop()
