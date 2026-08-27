@@ -23,7 +23,7 @@ except ImportError:
     SERIAL_AVAILABLE = False
 
 # ── HARDWARE & CONFIG ─────────────────────────────────────────────────────────
-SERIAL_PORT   = 'COM3'
+SERIAL_PORT   = 'COM5'
 BAUD_RATE     = 115200
 FULLSCREEN    = True
 SCREEN_SIZE   = [1920, 1200]
