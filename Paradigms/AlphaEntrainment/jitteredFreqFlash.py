@@ -24,23 +24,24 @@ except ImportError:
     SERIAL_AVAILABLE = False
 
 # ── HARDWARE & CONFIG ─────────────────────────────────────────────────────────
-SERIAL_PORT   = 'COM3'
+SERIAL_PORT   = 'COM5'
 BAUD_RATE     = 115200
+
 FULLSCREEN    = True
 FALLBACK_SCREEN_SIZE = [1920, 1200]
 OUTPUT_DIR    = 'data'
 IMAGE_DIR     = 'data'
 
 # Flashing Color Configuration (HEX or named color). Use '#FFDCA8' for a warm tone, or 'white' for pure white.
-FLASH_COLOR   = '#FFDCA8'
+FLASH_COLOR   = '#5b8cff'
 
 # Flashing Sequence Configuration: list of (frequency_in_Hz, duration_in_seconds)
 FREQ_SEQUENCE = [
-    (8, 20.0),   # 8 Hz for 5 seconds
-    (9, 20.0),  
-    (10, 20.0),
-    (11, 20.0),
-    (12, 20.0),   
+    (8, 60.0),   # 8 Hz for 5 seconds
+    (9, 60.0),  
+    (10, 60.0),
+    (11, 60.0),
+    (12, 60.0),   
 ]
 
 # ── INTER-FLASH JITTER CONFIG ─────────────────────────────────────────────────

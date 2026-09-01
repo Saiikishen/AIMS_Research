@@ -15,12 +15,10 @@ from scipy.signal import welch
 # Configuration
 # ============================================================
 
-EDF_PATH = r"C:\Users\saiik\Downloads\mridul_after_flash.edf"
-
-# Enter the start and stop time (in seconds from recording start)
+EDF_PATH = r"C:\Users\saiik\Downloads\MIRIAM EXPT\SHAMLIN_SUB3\POST ENTRAINEMNT\SUB03~ SHAMLIN_e41648ef-8499-4014-9715-fa32f6961a5a.edf" 
 # of the segment you want to analyse.
-SEGMENT_TMIN = 13    # <-- change me
-SEGMENT_TMAX = 246   # <-- change me
+SEGMENT_TMIN =240     # <-- change me
+SEGMENT_TMAX = 305   # <-- change me
 
 # A short label used in plot titles and output filenames.
 SEGMENT_LABEL = "entrainment_window"

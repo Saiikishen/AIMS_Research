@@ -51,13 +51,11 @@ def close_serial():
 INHALE_DUR        = 4.0       # seconds for breathe-IN  phase
 HOLD_DUR          = 0.0       # seconds for hold-breath phase (set 0 to skip)
 EXHALE_DUR        = 6.0       # seconds for breathe-OUT phase
-NUM_CYCLES        = 25        # number of complete breath cycles (0 = infinite)
+NUM_CYCLES        = 27      # number of complete breath cycles (0 = infinite)
 FULLSCREEN        = True
 
-# ── FLASH FREQUENCIES (Hz) ───────────────────────────────────────────────────
-FLASH_HZ_INHALE   = 9.7    # flicker rate during inhale
-FLASH_HZ_HOLD     = 9.7      # flicker rate during hold
-FLASH_HZ_EXHALE   = 9.7      # flicker rate during exhale
+# ── FLASH FREQUENCY DEFAULT (Hz) ─────────────────────────────────────────────
+DEFAULT_FLASH_HZ  = 8.97    # default flicker rate if not modified in dialog
 
 # ── FLASH COLOURS ─────────────────────────────────────────────────────────────
 FLASH_COLOR_INHALE  = '#5b8cff'   # cool blue   -- breath in
@@ -81,6 +79,29 @@ TEXT_COLOR        = 'white'
 # ==============================================================================
 # HELPERS
 # ==============================================================================
+
+def prompt_frequency(default_hz=DEFAULT_FLASH_HZ):
+    """
+    Prompt the user for the flash frequency in Hz via a GUI dialog box.
+    """
+    from psychopy import gui, core
+    dlg = gui.Dlg(title='Guided Breathing Flash')
+    dlg.addField('Flash Frequency (Hz):', str(default_hz))
+    data = dlg.show()
+    if not dlg.OK:
+        core.quit()
+        sys.exit(0)
+
+    freq_str = str(data[0]).strip()
+    try:
+        freq = float(freq_str)
+        if freq <= 0:
+            raise ValueError('Frequency must be greater than 0 Hz')
+        return freq
+    except ValueError as e:
+        print(f'[INPUT WARNING] Invalid frequency "{freq_str}" ({e}); using fallback {default_hz} Hz.')
+        return float(default_hz)
+
 
 def measure_refresh_rate(win, fallback_hz=NOMINAL_REFRESH_HZ):
     """
@@ -143,17 +164,21 @@ def flash_phase(win, rect, flash_hz, duration_s, refresh_hz, clk, event,
 # ==============================================================================
 
 def run_breathing_flash():
-    init_serial()
-
     # Late imports
     try:
         # pyrefly: ignore [missing-import]
-        from psychopy import visual, core, event, sound, prefs
+        from psychopy import visual, core, event, sound, prefs, gui
         prefs.hardware['audioLib'] = ['ptb', 'sounddevice', 'pygame']
         prefs.hardware['audioDevice'] = ['Headphones (HBTS004)', 'default']
     except ImportError:
         print('[ERROR] PsychoPy is required. Install via:  pip install psychopy')
         sys.exit(1)
+
+    # Prompt for flash frequency before initializing full screen window
+    flash_hz = prompt_frequency(DEFAULT_FLASH_HZ)
+    print(f'[CONFIG] Flashing frequency set to {flash_hz:.2f} Hz')
+
+    init_serial()
 
     # ── Audio ──────────────────────────────────────────────────────────────────
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -217,9 +242,7 @@ def run_breathing_flash():
         f"  BREATHE IN  ( {INHALE_DUR:.0f} s )  -->  BLUE flash  /  'OM'\n\n"
         + hold_line +
         f"  BREATHE OUT ( {EXHALE_DUR:.0f} s )  -->  VIOLET flash  /  'MAA'\n\n"
-        f"  Flash frequency: {FLASH_HZ_INHALE:.0f} Hz (inhale)  |  "
-        f"{FLASH_HZ_HOLD:.0f} Hz (hold)  |  "
-        f"{FLASH_HZ_EXHALE:.0f} Hz (exhale)\n\n"
+        f"  Flash frequency: {flash_hz:.2f} Hz\n\n"
         f"  {NUM_CYCLES} breath cycle(s) total.\n\n"
 
         "Press  SPACE  to begin   |   ESC to quit"
@@ -289,10 +312,10 @@ def run_breathing_flash():
         send_ttl()
 
         # ── INHALE PHASE ───────────────────────────────────────────────────────
-        print(f'[INHALE] {INHALE_DUR}s at {FLASH_HZ_INHALE} Hz')
+        print(f'[INHALE] {INHALE_DUR}s at {flash_hz:.2f} Hz')
         rect.fillColor  = FLASH_COLOR_INHALE
         rect.lineColor  = FLASH_COLOR_INHALE
-        ok = flash_phase(win, rect, FLASH_HZ_INHALE, INHALE_DUR,
+        ok = flash_phase(win, rect, flash_hz, INHALE_DUR,
                          refresh_hz, clk, event,
                          snd=snd_om, audio_ok=audio_ok)
         if not ok:
@@ -305,10 +328,10 @@ def run_breathing_flash():
 
         # ── HOLD BREATH PHASE ──────────────────────────────────────────────────
         if HOLD_DUR > 0:
-            print(f'[HOLD]   {HOLD_DUR}s at {FLASH_HZ_HOLD} Hz')
+            print(f'[HOLD]   {HOLD_DUR}s at {flash_hz:.2f} Hz')
             rect.fillColor = FLASH_COLOR_HOLD
             rect.lineColor = FLASH_COLOR_HOLD
-            ok = flash_phase(win, rect, FLASH_HZ_HOLD, HOLD_DUR,
+            ok = flash_phase(win, rect, flash_hz, HOLD_DUR,
                              refresh_hz, clk, event,
                              snd=None, audio_ok=False)  # no audio during hold
             if not ok:
@@ -320,10 +343,10 @@ def run_breathing_flash():
                 core.quit()
 
         # ── EXHALE PHASE ───────────────────────────────────────────────────────
-        print(f'[EXHALE] {EXHALE_DUR}s at {FLASH_HZ_EXHALE} Hz')
+        print(f'[EXHALE] {EXHALE_DUR}s at {flash_hz:.2f} Hz')
         rect.fillColor  = FLASH_COLOR_EXHALE
         rect.lineColor  = FLASH_COLOR_EXHALE
-        ok = flash_phase(win, rect, FLASH_HZ_EXHALE, EXHALE_DUR,
+        ok = flash_phase(win, rect, flash_hz, EXHALE_DUR,
                          refresh_hz, clk, event,
                          snd=snd_maa, audio_ok=audio_ok)
         if not ok:
