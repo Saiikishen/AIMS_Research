@@ -18,9 +18,6 @@ EDF_PATH = r"C:\Users\saiik\Downloads\MIRIAM EXPT\anagha_sub11\SUB11~ ANAGHA_6f2
 EYES_CLOSED_TMIN = 80
 EYES_CLOSED_TMAX = 135 # aim for 60 s; must be >= MIN_CLEAN_EYES_CLOSED_SEC
 
-EYES_OPEN_TMIN = 7
-EYES_OPEN_TMAX = 70
-
 # Optional repeat attempt if the first eyes-closed segment is invalid
 # (protocol: repeat the 60 s eyes-closed recording once, else exclude).
 # Leave as None to skip auto-retry.
@@ -32,7 +29,7 @@ REREFERENCE_CHANNELS = ["O1","O2"]   # re-derived as (channel - Cz)
 POSTERIOR_ROI = ["O1", "O2"]    # Oz used as-recorded unless also
                                        # added to REREFERENCE_CHANNELS
 
-BANDPASS = (1.0, 40.0)
+BANDPASS = (4.0, 40.0)
 MAINS_NOTCH_HZ = 50.0   # India mains; use 60.0 for US recordings
 
 MIN_CLEAN_EYES_CLOSED_SEC = 45.0
@@ -234,21 +231,6 @@ def analyze_eyes_closed(raw_full, tmin, tmax, roi_channels, ref_channel, rerefer
     return result
 
 
-def analyze_eyes_open_baseline(raw_full, tmin, tmax, roi_channels, window_sec, overlap, band):
-    """QC / baseline only. Not gated by the IAF validity rules."""
-    duration = tmax - tmin
-    seg = crop(raw_full, tmin, tmax)
-    freqs, psds = compute_channel_psds(seg, roi_channels, window_sec, overlap)
-    posterior_avg = np.mean([psds[ch] for ch in roi_channels], axis=0)
-    band_peak = find_channel_peak(freqs, posterior_avg, band)
-    return {
-        "condition": "eyes_open_baseline",
-        "tmin": tmin, "tmax": tmax, "clean_seconds": duration,
-        "channels_used": roi_channels,
-        "descriptive_alpha_peak_hz": round(float(band_peak), 3) if band_peak else None,
-        "note": "Eyes-open interval - QC / baseline reference only, not gated by IAF validity rules.",
-        "freqs": freqs, "channel_psds": psds,
-    }
 
 
 def plot_condition(result, band, out_path):
@@ -256,18 +238,21 @@ def plot_condition(result, band, out_path):
     psds = result["channel_psds"]
     fig, ax = plt.subplots(figsize=(8, 5))
     for ch, p in psds.items():
-        ax.semilogy(freqs, p, label=ch, alpha=0.6)
+        psd_db = 10 * np.log10(p + 1e-20)
+        ax.plot(freqs, psd_db, label=ch, alpha=0.6)
     posterior_avg = np.mean(list(psds.values()), axis=0)
-    ax.semilogy(freqs, posterior_avg, label="posterior avg", color="k", lw=2)
+    posterior_avg_db = 10 * np.log10(posterior_avg + 1e-20)
+    ax.plot(freqs, posterior_avg_db, label="posterior avg", color="k", lw=2)
     ax.axvspan(band[0], band[1], color="gray", alpha=0.15, label="7-13 Hz search band")
     peak = result.get("iaf_hz") or result.get("descriptive_alpha_peak_hz") or result.get("posterior_candidate_hz")
     if peak:
         ax.axvline(peak, color="red", ls="--", label=f"peak = {peak:.2f} Hz")
     ax.set_xlim(1, 40)
     ax.set_xlabel("Frequency (Hz)")
-    ax.set_ylabel("PSD")
+    ax.set_ylabel("PSD (dB)")
     ax.set_title(result["condition"])
     ax.legend(fontsize=8)
+    ax.grid(True, linestyle="--", alpha=0.4)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -315,19 +300,12 @@ def run(config):
     if "freqs" in ec_result:
         plot_condition(ec_result, config["ALPHA_SEARCH_BAND"], out_dir / "eyes_closed_psd.png")
 
-    eo_result = analyze_eyes_open_baseline(
-        raw, config["EYES_OPEN_TMIN"], config["EYES_OPEN_TMAX"], roi,
-        config["WINDOW_SEC"], config["WINDOW_OVERLAP"], config["ALPHA_SEARCH_BAND"],
-    )
-    plot_condition(eo_result, config["ALPHA_SEARCH_BAND"], out_dir / "eyes_open_baseline_psd.png")
-
     def strip_arrays(d):
         return {k: v for k, v in d.items() if k not in ("freqs", "channel_psds")}
 
     summary = {
         "edf_path": config["EDF_PATH"],
         "eyes_closed": strip_arrays(ec_result),
-        "eyes_open_baseline": strip_arrays(eo_result),
     }
 
     with open(out_dir / "iaf_summary.json", "w") as f:
