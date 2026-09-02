@@ -37,11 +37,11 @@ FLASH_COLOR   = '#5b8cff'
 
 # Flashing Sequence Configuration: list of (frequency_in_Hz, duration_in_seconds)
 FREQ_SEQUENCE = [
-    (8, 60.0),   # 8 Hz for 5 seconds
-    (9, 60.0),  
-    (10, 60.0),
-    (11, 60.0),
-    (12, 60.0),   
+    (8, 55.0),   # 8 Hz for 5 seconds
+    (11, 55.0),  
+    (10, 55.0),
+    (9, 55.0),
+    (12, 55.0),   
 ]
 
 # ── INTER-FLASH JITTER CONFIG ─────────────────────────────────────────────────

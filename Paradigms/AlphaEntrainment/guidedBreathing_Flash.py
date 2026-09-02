@@ -84,6 +84,7 @@ def prompt_frequency(default_hz=DEFAULT_FLASH_HZ):
     """
     Prompt the user for the flash frequency in Hz via a GUI dialog box.
     """
+    # pyrefly: ignore [missing-import]
     from psychopy import gui, core
     dlg = gui.Dlg(title='Guided Breathing Flash')
     dlg.addField('Flash Frequency (Hz):', str(default_hz))
