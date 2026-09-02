@@ -54,6 +54,10 @@ EXHALE_DUR        = 6.0       # seconds for breathe-OUT phase
 NUM_CYCLES        = 27      # number of complete breath cycles (0 = infinite)
 FULLSCREEN        = True
 
+# ── POST-BREATHING REST & EYES-CLOSED CONFIGURATION ───────────────────────────
+POST_BREATH_FIXATION_DUR = 15.0  # seconds for fixation screen (at 15th sec: "Close Your Eyes")
+EYES_CLOSED_DUR          = 60.0  # seconds for blank screen eyes-closed rest (1 minute)
+
 # ── FLASH FREQUENCY DEFAULT (Hz) ─────────────────────────────────────────────
 DEFAULT_FLASH_HZ  = 8.97    # default flicker rate if not modified in dialog
 
@@ -124,8 +128,12 @@ def measure_refresh_rate(win, fallback_hz=NOMINAL_REFRESH_HZ):
 
 
 def flash_phase(win, rect, flash_hz, duration_s, refresh_hz, clk, event,
-                snd=None, audio_ok=False):
- 
+                snd=None, audio_ok=False, on_first_flip=None):
+    """
+    on_first_flip: optional callable scheduled via win.callOnFlip so it fires
+    at the exact VSync of the very first rendered frame -- i.e. the trigger
+    and the first screen flash are hardware-synchronised to the same refresh.
+    """
     frames_per_cycle  = refresh_hz / flash_hz
     half_cycle_frames = frames_per_cycle / 2.0
     total_frames      = int(round(duration_s * refresh_hz))
@@ -147,6 +155,10 @@ def flash_phase(win, rect, flash_hz, duration_s, refresh_hz, clk, event,
         if phase < half_cycle_frames:
             rect.draw()          # ON frame  -- colour visible
         # OFF frame  -- window cleared to BG_COLOR (set on win creation)
+
+        # Schedule trigger to fire at the exact VSync of the first frame only
+        if frame_n == 0 and on_first_flip is not None:
+            win.callOnFlip(on_first_flip)
 
         # Pace to real-time deadline (guard against non-vsync drivers)
         target_t = t_start + (frame_n + 1) * frame_period
@@ -203,6 +215,21 @@ def run_breathing_flash():
     else:
         print('[AUDIO] Running without audio (one or both files missing).')
 
+    # ── Beep Sound ─────────────────────────────────────────────────────────────
+    beep_snd = None
+    try:
+        beep_snd = sound.Sound(value='C', octave=6, secs=0.6, volume=1.0)
+    except Exception as exc:
+        print(f'[AUDIO WARNING] Could not initialize beep sound: {exc}')
+
+    def play_beep():
+        if beep_snd is not None:
+            try:
+                beep_snd.stop()
+                beep_snd.play()
+            except Exception as e:
+                print(f'[AUDIO WARNING] Error playing beep: {e}')
+
     # ── Window ─────────────────────────────────────────────────────────────────
     win = visual.Window(
         fullscr=FULLSCREEN,
@@ -228,6 +255,25 @@ def run_breathing_flash():
         pos=(0, 0),
         fillColor=FLASH_COLOR_INHALE,
         lineColor=FLASH_COLOR_INHALE,
+    )
+
+    # ── Post-Breathing Visual stimuli ──────────────────────────────────────────
+    fixation_stim = visual.TextStim(
+        win,
+        text="+",
+        height=0.12,
+        color='white',
+        pos=(0, 0),
+        units='norm',
+    )
+    close_eyes_stim = visual.TextStim(
+        win,
+        text="Close Your Eyes",
+        height=0.09,
+        color='white',
+        bold=True,
+        pos=(0, 0),
+        units='norm',
     )
 
     # ── INSTRUCTION SCREEN stimuli ─────────────────────────────────────────────
@@ -309,16 +355,16 @@ def run_breathing_flash():
         cycle += 1
         print(f'[CYCLE {cycle}] Starting cycle {cycle} of {NUM_CYCLES}')
 
-        # Send trigger at the beginning of each cycle
-        send_ttl()
-
         # ── INHALE PHASE ───────────────────────────────────────────────────────
+        # Trigger is sent via callOnFlip so it fires at the exact VSync moment
+        # the first flicker frame appears on screen (hardware-synchronised).
         print(f'[INHALE] {INHALE_DUR}s at {flash_hz:.2f} Hz')
         rect.fillColor  = FLASH_COLOR_INHALE
         rect.lineColor  = FLASH_COLOR_INHALE
         ok = flash_phase(win, rect, flash_hz, INHALE_DUR,
                          refresh_hz, clk, event,
-                         snd=snd_om, audio_ok=audio_ok)
+                         snd=snd_om, audio_ok=audio_ok,
+                         on_first_flip=send_ttl)
         if not ok:
             if audio_ok:
                 snd_om.stop()
@@ -358,34 +404,66 @@ def run_breathing_flash():
             win.close()
             core.quit()
 
-    # ── END SCREEN ─────────────────────────────────────────────────────────────
-    win.color = BG_COLOR
-    end_stim = visual.TextStim(
-        win,
-        text=(
-            "Session Complete\n\n"
-            "Well done.\n\n"
-            "Take a moment to rest\n"
-            "before continuing.\n\n"
-            "(This window will close in 5 seconds)"
-        ),
-        height=0.08,
-        color=TEXT_COLOR,
-        pos=(0, 0),
-        alignText='center',
-        units='norm',
-    )
+    # ── POST-BREATHING PHASE ───────────────────────────────────────────────────
+    # 1. Trigger when the last breathing cycle finishes
+    print('[TTL] Breathing cycles complete. Sending trigger.')
+    send_ttl()
 
-    t_close = clk.getTime() + 5.0
-    while clk.getTime() < t_close:
-        if event.getKeys(['escape', 'space']):
-            break
-        end_stim.draw()
+    # 2. Fixation Screen (15s total, "Close Your Eyes" displayed at 15th second)
+    print(f'[POST-BREATH] Fixation screen for {POST_BREATH_FIXATION_DUR}s (showing "Close Your Eyes" at 15th sec)...')
+    fix_clk = core.Clock()
+    while fix_clk.getTime() < POST_BREATH_FIXATION_DUR:
+        if event.getKeys(['escape']):
+            if audio_ok:
+                snd_om.stop()
+                snd_maa.stop()
+            close_serial()
+            win.close()
+            core.quit()
+
+        t = fix_clk.getTime()
+        if t >= (POST_BREATH_FIXATION_DUR - 1.0):
+            close_eyes_stim.draw()
+        else:
+            fixation_stim.draw()
+
         win.flip()
+
+    # 3. Followed by Beep and transition to 1-minute Blank Screen
+    print('[AUDIO] Playing "Close Your Eyes" beep...')
+    play_beep()
+
+    # Clear screen to black/background
+    win.color = BG_COLOR
+    win.flip()
+
+    # Trigger sent when blank screen appears
+    print(f'[TTL] Blank screen starting ({EYES_CLOSED_DUR}s eyes-closed). Sending trigger.')
+    send_ttl()
+
+    blank_clk = core.Clock()
+    while blank_clk.getTime() < EYES_CLOSED_DUR:
+        if event.getKeys(['escape']):
+            if beep_snd is not None:
+                beep_snd.stop()
+            close_serial()
+            win.close()
+            core.quit()
+
+        win.flip()
+
+    # 4. End of 1 minute: Play beep sound, send trigger, and finish
+    print('[AUDIO] 1-minute eyes-closed complete. Playing final beep...')
+    play_beep()
+
+    print('[TTL] Experiment finished. Sending trigger.')
+    send_ttl()
+
+    # Small delay to let the final beep finish playing
+    core.wait(1.0)
 
     # ── Cleanup ────────────────────────────────────────────────────────────────
     close_serial()
-
     win.close()
     core.quit()
 
