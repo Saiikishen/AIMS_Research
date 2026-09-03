@@ -12,7 +12,7 @@ from scipy.signal import welch
 
 
 
-EDF_PATH = r"C:\Users\saiik\Downloads\MIRIAM EXPT\anagha_sub11\SUB11~ ANAGHA_6f2f6a94-0f05-46c9-a9ae-faecef4e725c.edf"
+EDF_PATH = r"C:\Users\saiik\Downloads\MIRIAM EXPT\sub00 sai\trial 2\sub00~ Sai_bcb6e54e-e045-4978-9c96-12eaa2f070e5.edf"
 
 # Manually inspected clean windows (seconds from recording start)
 EYES_CLOSED_TMIN = 80
@@ -29,7 +29,7 @@ REREFERENCE_CHANNELS = ["O1","O2"]   # re-derived as (channel - Cz)
 POSTERIOR_ROI = ["O1", "O2"]    # Oz used as-recorded unless also
                                        # added to REREFERENCE_CHANNELS
 
-BANDPASS = (4.0, 40.0)
+BANDPASS = (1.0, 40.0)
 MAINS_NOTCH_HZ = 50.0   # India mains; use 60.0 for US recordings
 
 MIN_CLEAN_EYES_CLOSED_SEC = 45.0

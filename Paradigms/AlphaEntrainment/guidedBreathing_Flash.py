@@ -1,7 +1,10 @@
 #!/usr/bin/env python
+import csv
+import math
 import os
 import sys
 import time
+from datetime import datetime
 
 try:
     import serial, serial.serialutil
@@ -55,7 +58,7 @@ NUM_CYCLES        = 27      # number of complete breath cycles (0 = infinite)
 FULLSCREEN        = True
 
 # ── POST-BREATHING REST & EYES-CLOSED CONFIGURATION ───────────────────────────
-POST_BREATH_FIXATION_DUR = 15.0  # seconds for fixation screen (at 15th sec: "Close Your Eyes")
+POST_BREATH_FIXATION_DUR = 30.0  # seconds for fixation screen (at 15th sec: "Close Your Eyes")
 EYES_CLOSED_DUR          = 60.0  # seconds for blank screen eyes-closed rest (1 minute)
 
 # ── FLASH FREQUENCY DEFAULT (Hz) ─────────────────────────────────────────────
@@ -66,6 +69,9 @@ FLASH_COLOR_INHALE  = '#5b8cff'   # cool blue   -- breath in
 FLASH_COLOR_HOLD    = '#5b8cff'   # warm gold   -- hold breath
 FLASH_COLOR_EXHALE  = '#5b8cff'   # soft violet -- breath out
 BG_COLOR            = '#0d0d1a'   # background / OFF colour
+
+# ── STIMULUS LOG OUTPUT ───────────────────────────────────────────────────────
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
 # ── SCREEN REFRESH (fallback if measurement fails) ───────────────────────────
 NOMINAL_REFRESH_HZ  = 120.0
@@ -128,16 +134,23 @@ def measure_refresh_rate(win, fallback_hz=NOMINAL_REFRESH_HZ):
 
 
 def flash_phase(win, rect, flash_hz, duration_s, refresh_hz, clk, event,
-                snd=None, audio_ok=False, on_first_flip=None):
+                snd=None, audio_ok=False, on_first_flip=None,
+                stimulus_log=None, cycle_num=0, breath_label='',
+                global_clk=None):
     """
     on_first_flip: optional callable scheduled via win.callOnFlip so it fires
     at the exact VSync of the very first rendered frame -- i.e. the trigger
     and the first screen flash are hardware-synchronised to the same refresh.
+
+    stimulus_log: if provided, a list to which one dict per frame is appended,
+    recording time_s, global_time_s, frame, cycle, breath_phase, stimulus_state,
+    phase_rad, phase_deg, trigger_sent for offline analysis of the flicker waveform.
     """
     frames_per_cycle  = refresh_hz / flash_hz
     half_cycle_frames = frames_per_cycle / 2.0
     total_frames      = int(round(duration_s * refresh_hz))
     frame_period      = 1.0 / refresh_hz
+    TWO_PI            = 2.0 * math.pi
 
     if audio_ok and snd is not None:
         snd.stop()
@@ -151,13 +164,15 @@ def flash_phase(win, rect, flash_hz, duration_s, refresh_hz, clk, event,
                 snd.stop()
             return False
 
-        phase = frame_n % frames_per_cycle
-        if phase < half_cycle_frames:
+        phase_in_cycle = frame_n % frames_per_cycle
+        is_on = phase_in_cycle < half_cycle_frames
+        if is_on:
             rect.draw()          # ON frame  -- colour visible
         # OFF frame  -- window cleared to BG_COLOR (set on win creation)
 
         # Schedule trigger to fire at the exact VSync of the first frame only
-        if frame_n == 0 and on_first_flip is not None:
+        is_trigger_frame = 1 if (frame_n == 0 and on_first_flip is not None) else 0
+        if is_trigger_frame:
             win.callOnFlip(on_first_flip)
 
         # Pace to real-time deadline (guard against non-vsync drivers)
@@ -165,6 +180,23 @@ def flash_phase(win, rect, flash_hz, duration_s, refresh_hz, clk, event,
         while clk.getTime() < target_t:
             pass
         win.flip()
+
+        # ── Log this frame's stimulus state & trigger ─────────────────────
+        if stimulus_log is not None:
+            t_frame = (frame_n + 1) * frame_period          # time within phase
+            phase_rad = (TWO_PI * flash_hz * t_frame) % TWO_PI
+            g_time = global_clk.getTime() if global_clk is not None else t_frame
+            stimulus_log.append({
+                'time_s':         round(t_frame, 6),
+                'global_time_s':  round(g_time, 6),
+                'frame':          frame_n,
+                'cycle':          cycle_num,
+                'breath_phase':   breath_label,
+                'stimulus_state': 'ON' if is_on else 'OFF',
+                'phase_rad':      round(phase_rad, 4),
+                'phase_deg':      round(math.degrees(phase_rad), 2),
+                'trigger_sent':   is_trigger_frame,
+            })
 
     if audio_ok and snd is not None:
         snd.stop()
@@ -345,6 +377,24 @@ def run_breathing_flash():
     win.flip()
     core.wait(0.4)
 
+    # Global experiment clock (0.0s = moment breathing flashing begins)
+    global_clk = core.Clock()
+
+    # In-memory log of frame-by-frame stimulus & trigger state
+    stimulus_log = []
+
+    def save_logs():
+        if stimulus_log:
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            csv_path = os.path.join(OUTPUT_DIR, 'stimulus_log.csv')
+            fieldnames = ['time_s', 'global_time_s', 'frame', 'cycle', 'breath_phase',
+                          'stimulus_state', 'phase_rad', 'phase_deg', 'trigger_sent']
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(stimulus_log)
+            print(f'[LOG] Stimulus log saved: {csv_path} ({len(stimulus_log)} rows)')
+
     # ==========================================================================
     # BREATHING LOOP
     # ==========================================================================
@@ -364,11 +414,15 @@ def run_breathing_flash():
         ok = flash_phase(win, rect, flash_hz, INHALE_DUR,
                          refresh_hz, clk, event,
                          snd=snd_om, audio_ok=audio_ok,
-                         on_first_flip=send_ttl)
+                         on_first_flip=send_ttl,
+                         stimulus_log=stimulus_log,
+                         cycle_num=cycle, breath_label='inhale',
+                         global_clk=global_clk)
         if not ok:
             if audio_ok:
                 snd_om.stop()
                 snd_maa.stop()
+            save_logs()
             close_serial()
             win.close()
             core.quit()
@@ -380,11 +434,15 @@ def run_breathing_flash():
             rect.lineColor = FLASH_COLOR_HOLD
             ok = flash_phase(win, rect, flash_hz, HOLD_DUR,
                              refresh_hz, clk, event,
-                             snd=None, audio_ok=False)  # no audio during hold
+                             snd=None, audio_ok=False,  # no audio during hold
+                             stimulus_log=stimulus_log,
+                             cycle_num=cycle, breath_label='hold',
+                             global_clk=global_clk)
             if not ok:
                 if audio_ok:
                     snd_om.stop()
                     snd_maa.stop()
+                save_logs()
                 close_serial()
                 win.close()
                 core.quit()
@@ -395,11 +453,15 @@ def run_breathing_flash():
         rect.lineColor  = FLASH_COLOR_EXHALE
         ok = flash_phase(win, rect, flash_hz, EXHALE_DUR,
                          refresh_hz, clk, event,
-                         snd=snd_maa, audio_ok=audio_ok)
+                         snd=snd_maa, audio_ok=audio_ok,
+                         stimulus_log=stimulus_log,
+                         cycle_num=cycle, breath_label='exhale',
+                         global_clk=global_clk)
         if not ok:
             if audio_ok:
                 snd_om.stop()
                 snd_maa.stop()
+            save_logs()
             close_serial()
             win.close()
             core.quit()
@@ -417,6 +479,7 @@ def run_breathing_flash():
             if audio_ok:
                 snd_om.stop()
                 snd_maa.stop()
+            save_logs()
             close_serial()
             win.close()
             core.quit()
@@ -446,6 +509,7 @@ def run_breathing_flash():
         if event.getKeys(['escape']):
             if beep_snd is not None:
                 beep_snd.stop()
+            save_logs()
             close_serial()
             win.close()
             core.quit()
@@ -461,6 +525,9 @@ def run_breathing_flash():
 
     # Small delay to let the final beep finish playing
     core.wait(1.0)
+
+    # ── Write CSV logs ─────────────────────────────────────────────────────────
+    save_logs()
 
     # ── Cleanup ────────────────────────────────────────────────────────────────
     close_serial()

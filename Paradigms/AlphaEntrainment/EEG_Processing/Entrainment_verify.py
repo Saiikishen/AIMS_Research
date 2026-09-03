@@ -27,7 +27,7 @@ REFERENCE_CHANNEL = "Cz"
 REREFERENCE_CHANNELS = ["O1", "O2"]   # re-derived as (channel - Cz)
 POSTERIOR_ROI = ["O1", "O2"]          # channels whose PSD will be computed
 
-BANDPASS = (1.0, 40.0)
+BANDPASS = (4.0, 40.0)
 MAINS_NOTCH_HZ = 50.0   # India mains; use 60.0 for US recordings
 
 WINDOW_SEC = 4.0
