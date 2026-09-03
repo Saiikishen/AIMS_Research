@@ -12,11 +12,11 @@ from scipy.signal import welch
 
 
 
-EDF_PATH = r"C:\Users\saiik\Downloads\MIRIAM EXPT\sub00 sai\trial 2\sub00~ Sai_bcb6e54e-e045-4978-9c96-12eaa2f070e5.edf"
+EDF_PATH = r"C:\Users\saiik\Downloads\MIRIAM EXPT\MIRIAM\TRIAL 2\SUB13~ MIRIAM_58ec3626-c567-4d96-aa83-8e6a66fff7b2.edf"
 
 # Manually inspected clean windows (seconds from recording start)
-EYES_CLOSED_TMIN = 80
-EYES_CLOSED_TMAX = 135 # aim for 60 s; must be >= MIN_CLEAN_EYES_CLOSED_SEC
+EYES_CLOSED_TMIN = 77
+EYES_CLOSED_TMAX = 140 # aim for 60 s; must be >= MIN_CLEAN_EYES_CLOSED_SEC
 
 # Optional repeat attempt if the first eyes-closed segment is invalid
 # (protocol: repeat the 60 s eyes-closed recording once, else exclude).

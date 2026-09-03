@@ -90,6 +90,7 @@ MERGE_ASOF_TOL_S = 0.05           # Max gap allowed when mapping an EEG sample t
 
 EPOCH_TMIN, EPOCH_TMAX = -1.0, 10.0   # Window around each cycle-onset trigger for ITPC (s)
 SLIDING_PLV_WIN_S, SLIDING_PLV_STEP_S = 2.0, 0.5
+BOUNDARY_EXCLUDE_S = 0.5           # seconds to exclude around each phase-reset boundary (filter ringing)
 
 OUTPUT_DIR = "phase_locking_results"
 
@@ -355,6 +356,20 @@ def analyze_channel(ch_name, raw, csv_df, flicker_freq, eeg_trigger_times_matche
     csv_query_times = (eeg_times - intercept) / slope
     ref_wave = reference_square_wave(csv_df, csv_query_times)
     valid_mask = ~np.isnan(ref_wave)
+
+    # Exclude samples near phase-reset boundaries to avoid filter-ringing artifacts.
+    # Each flash_phase() call resets frame_n to 0, creating a step discontinuity in
+    # the reference square wave that causes IIR filter ringing for several cycles.
+    boundary_times_csv = []
+    for _cyc, grp in csv_df.groupby("cycle"):
+        for bp in grp["breath_phase"].unique():
+            sub = grp[grp["breath_phase"] == bp]
+            boundary_times_csv.append(sub["global_time_s"].iloc[0])
+    boundary_times_eeg = slope * np.array(boundary_times_csv) + intercept
+    boundary_mask = np.ones(n, dtype=bool)
+    for bt in boundary_times_eeg:
+        boundary_mask &= np.abs(eeg_times - bt) > BOUNDARY_EXCLUDE_S
+    valid_mask = valid_mask & boundary_mask
     if valid_mask.sum() < sfreq * 5:
         print(f"[{ch_name}] fewer than 5s of overlap with logged stimulus frames - skipping")
         return None
