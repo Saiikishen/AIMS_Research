@@ -69,8 +69,8 @@ mne.set_log_level("ERROR")
 # ============================================================================
 # CONFIG - edit these for your session
 # ============================================================================
-EDF_PATH = r"C:\Users\saiik\Downloads\MIRIAM EXPT\sub00 sai\post flash sai\sub00~ Sai_76ef5294-fcd4-4840-9222-ecb7887a3274.edf"                 # <-- point this at your .edf file
-STIMULUS_CSV_PATH = r"C:\Users\saiik\OneDrive\Documents\GitHub\AIMS_Research\Paradigms\AlphaEntrainment\data\stimulus_log.csv"     # PsychoPy stimulus log
+EDF_PATH = r"C:\Users\saiik\Downloads\MIRIAM EXPT\SHAMLIN_SUB3\POST ENTRAINEMNT\SUB03~ SHAMLIN_e41648ef-8499-4014-9715-fa32f6961a5a.edf"           # <-- point this at your .edf file
+STIMULUS_CSV_PATH =r"C:\Users\saiik\OneDrive\Documents\GitHub\AIMS_Research\Paradigms\AlphaEntrainment\data\stimulus_log.csv"
 
 REFERENCE_CHANNEL = "Cz"                   # Reference channel to remove noise
 REREFERENCE_CHANNELS = ["O1", "O2"]        # Re-derived as bipolar (O1 - Cz, O2 - Cz)
@@ -388,8 +388,6 @@ def analyze_channel(ch_name, raw, csv_df, flicker_freq, eeg_trigger_times_matche
     mean_lag_rad = np.angle(np.mean(np.exp(1j * (ref_phase[valid_mask] - eeg_phase[valid_mask]))))
     mean_lag_ms = (mean_lag_rad / (2 * np.pi * flicker_freq)) * 1000
 
-    t_slide, plv_slide = sliding_plv(ref_phase, eeg_phase, sfreq, valid_mask)
-
     # Per-cycle PLV using the matched trigger times as cycle boundaries
     cycle_plvs = []
     for i in range(len(eeg_trigger_times_matched) - 1):
@@ -432,26 +430,19 @@ def analyze_channel(ch_name, raw, csv_df, flicker_freq, eeg_trigger_times_matche
     snr_on_2f0 = snr_at(f_on, pxx_on, 2 * flicker_freq)
 
     # ---- plots ----
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
     ref_info = f" (re-ref to {REFERENCE_CHANNEL})" if REFERENCE_CHANNEL else ""
     fig.suptitle(f"Channel {ch_name}{ref_info}  |  flicker {flicker_freq:.3f} Hz  |  "
                  f"overall PLV={overall_plv:.3f}  lag={mean_lag_ms:+.1f} ms")
 
-    ax = axes[0, 0]
-    ax.plot(t_slide, plv_slide)
-    ax.set_title("Sliding PLV (stimulus vs EEG)")
-    ax.set_xlabel("time since recording start (s)")
-    ax.set_ylabel("PLV")
-    ax.set_ylim(0, 1)
-
-    ax = axes[0, 1]
+    ax = axes[0]
     ax.bar(np.arange(1, len(cycle_plvs) + 1), cycle_plvs)
     ax.set_title("PLV per breath cycle")
     ax.set_xlabel("cycle #")
     ax.set_ylabel("PLV")
     ax.set_ylim(0, 1)
 
-    ax = axes[1, 0]
+    ax = axes[1]
     if itpc is not None:
         ax.plot(itpc_t, itpc)
         ax.axvline(0, color="k", linestyle="--", linewidth=1)
@@ -460,7 +451,7 @@ def analyze_channel(ch_name, raw, csv_df, flicker_freq, eeg_trigger_times_matche
     ax.set_ylabel("ITPC")
     ax.set_ylim(0, 1)
 
-    ax = axes[1, 1]
+    ax = axes[2]
     ax.semilogy(f_on, pxx_on, label="during flicker")
     if pxx_base is not None:
         ax.semilogy(f_base, pxx_base, label="baseline (post-cycles)")
