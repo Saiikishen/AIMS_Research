@@ -1,1 +1,4 @@
 *.png
+__pycache__/
+.pytest_cache/
+phase_locking_results/
