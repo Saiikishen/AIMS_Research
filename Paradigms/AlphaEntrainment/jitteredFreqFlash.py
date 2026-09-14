@@ -3,16 +3,16 @@
 """
 FEATURES
 --------
-1. Flashes an image at varying frequencies (default: 8 Hz for 5s -> 12 Hz for 5s -> 9 Hz for 5s).
-2. Includes a 3-second delay (inter-block interval with fixation cross) between switching frequencies.
-3. Sends hardware TTL trigger (0x01) via COM3 every time just before each flashing block begins, exactly like `object_naming.py`.
-4. Prints confirmation to console every time a trigger is successfully sent.
-5. Logs exact calendar date/time timestamps and event durations down to the microsecond.
-6. Robust square-wave (ON/OFF) frame-by-frame rendering loop prevents screen glitches and accurate frequency modulation across any screen refresh rate.
-
+1. Flashes an image/rectangle at varying frequencies (default: 8 Hz -> 11 Hz -> 10 Hz -> 9 Hz -> 12 Hz, 55s each).
+2. Continuous, seamless transitions between frequency blocks with NO intermediate gaps, announcements, or fixation crosses.
+3. Sends hardware TTL trigger (0x01) via COM5 every 10 seconds throughout continuous flashing, synchronized to frame flips.
+4. Comprehensive frame-by-frame stimulus log (stimulus_log.csv) recording instantaneous frequency, time, phase, ON/OFF state, and trigger events for phase locking calculation.
+5. High-level event CSV log recording calendar timestamps and event markers.
+6. Robust square-wave (ON/OFF) frame-by-frame rendering loop with optional inter-flash jitter.
+7. Post-flashing resting phase: 30s eyes-open with fixation cross (showing "Close Your Eyes" in final second), followed by 1 min (60s) eyes-closed resting period with synchronized TTL triggers and auditory cue beeps.
 """
 
-import os, csv, time, random, re
+import os, sys, csv, time, random, re, math
 from datetime import datetime
 # pyrefly: ignore [missing-import]
 from psychopy import visual, core, event, gui
@@ -27,6 +27,9 @@ except ImportError:
 SERIAL_PORT   = 'COM5'
 BAUD_RATE     = 115200
 
+# Periodic TTL trigger interval during continuous flashing (seconds)
+TRIGGER_INTERVAL_S = 10.0
+
 FULLSCREEN    = True
 FALLBACK_SCREEN_SIZE = [1920, 1200]
 OUTPUT_DIR    = 'data'
@@ -37,7 +40,7 @@ FLASH_COLOR   = '#5b8cff'
 
 # Flashing Sequence Configuration: list of (frequency_in_Hz, duration_in_seconds)
 FREQ_SEQUENCE = [
-    (8, 55.0),   # 8 Hz for 5 seconds
+    (8, 55.0),
     (11, 55.0),  
     (10, 55.0),
     (9, 55.0),
@@ -50,28 +53,16 @@ FREQ_SEQUENCE = [
 # from cycle to cycle while keeping the OVERALL rate across each block locked to
 # exactly `freq` Hz -- same total flash count, same block duration, every time.
 JITTER_ENABLED   = True
-JITTER_FRACTION  = 0.2      # Max deviation from the nominal inter-flash interval, as
-                             # a fraction of that interval. At 8 Hz (125ms nominal)
-                             # this lets consecutive flashes land anywhere from
-                             # 100-150ms apart (e.g. 150ms then 100ms) while every
-                             # PAIR of flashes still sums to exactly 250ms -- so the
-                             # block always ends up with the same flash count/timing
-                             # it would have had at a constant rate.
-JITTER_MODE      = 'random'  # 'random'      -> a new random jitter magnitude every
-                              #                  pair (natural, varies pair to pair)
-                              # 'alternating' -> always the maximum jitter, alternating
-                              #                  +/- (e.g. exactly 150/100/150/100 ms
-                              #                  at 8 Hz with JITTER_FRACTION=0.2)
-JITTER_SEED      = None     # Set an int for a reproducible jitter sequence across
-                             # runs; leave as None for a fresh random sequence each run
+JITTER_FRACTION  = 0.2      # Max deviation from the nominal inter-flash interval
+JITTER_MODE      = 'random'  # 'random' or 'alternating'
+JITTER_SEED      = None     # Set an int for a reproducible jitter sequence; None for fresh random
 
-DELAY_DUR           = 9.5   # 9.5s delay in between switching frequencies
-FIXATION_DUR        = 5.0   # 5.0s initial pre-stimulus fixation before the first flash block
 WELCOME_DUR         = 1.0   # 1.0s initial welcome display
 GOODBYE_DUR         = 1.0   # 1.0s goodbye screen
-FREQ_ANNOUNCE_DUR   = 2.0   # 2.0s display showing what frequency is about to be flashed
-PRE_FLASH_FIX_DUR   = 1.0   # 1.0s brief fixation cross right after announcement before flashing begins
 
+# ── POST-FLASHING REST & EYES-CLOSED CONFIGURATION ───────────────────────────
+POST_FLASH_FIXATION_DUR = 30.0  # seconds for fixation screen (showing "Close Your Eyes" at final second)
+EYES_CLOSED_DUR         = 60.0  # seconds for blank screen eyes-closed rest (1 minute)
 
 NOMINAL_REFRESH_HZ  = 120.0
 MIN_PLAUSIBLE_HZ    = 30.0
@@ -156,18 +147,22 @@ _writer = _fh = _clk = None
 _FIELDS = ['timestamp', 'subj', 'ses', 'day', 'task', 'run',
            'block_num', 'frequency_hz', 'image_name', 'event', 'onset_s', 'duration_s']
 
+_stimulus_log = []
+_session_ts = None
+
 def init_log(subj, ses, day, run):
-    global _writer, _fh, _clk
+    global _writer, _fh, _clk, _stimulus_log, _session_ts
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    _session_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     fn = os.path.join(OUTPUT_DIR,
-         f'task6_white_flash_{subj}_ses{ses}_day{day}_run{run}_{ts}.csv')
+         f'task6_white_flash_{subj}_ses{ses}_day{day}_run{run}_{_session_ts}.csv')
     _fh = open(fn, 'w', newline='', encoding='utf-8')
     _writer = csv.DictWriter(_fh, fieldnames=_FIELDS)
     _writer.writeheader()
     _fh.flush()
     _clk = core.Clock()
-    print(f'[LOG] Created log file: {fn}')
+    _stimulus_log = []
+    print(f'[LOG] Created event log file: {fn}')
 
 def log(subj, ses, day, run, block_num='', frequency_hz='', image_name='',
         event_label='', onset='', duration=''):
@@ -185,6 +180,38 @@ def log(subj, ses, day, run, block_num='', frequency_hz='', image_name='',
     })
     _fh.flush()
 
+def save_stimulus_log(subj, ses, day, run):
+    global _stimulus_log, _session_ts
+    if not _stimulus_log:
+        return
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    ts = _session_ts or datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    # 1. Primary path for PhaseLocking.py
+    csv_path_primary = os.path.join(OUTPUT_DIR, 'stimulus_log.csv')
+    # 2. Timestamped session archive path so data is preserved across runs
+    csv_path_archive = os.path.join(
+        OUTPUT_DIR,
+        f'stimulus_log_{subj}_ses{ses}_day{day}_run{run}_{ts}.csv'
+    )
+
+    fieldnames = [
+        'time_s', 'global_time_s', 'frame', 'block_frame',
+        'block_num', 'frequency_hz', 'stimulus_state',
+        'phase_rad', 'phase_deg', 'trigger_sent',
+        'cycle', 'breath_phase'
+    ]
+
+    for path in [csv_path_primary, csv_path_archive]:
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(_stimulus_log)
+            print(f'[LOG] Stimulus log saved: {path} ({len(_stimulus_log)} rows)')
+        except Exception as e:
+            print(f'[LOG ERROR] Failed to save stimulus log to {path}: {e}')
+
 def close_log():
     if _fh:
         try:
@@ -195,7 +222,9 @@ def close_log():
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def abort(win, subj, ses, day, run):
     send_ttl()
-    log(subj, ses, day, run, event_label='abort', onset=_clk.getTime())
+    if _clk:
+        log(subj, ses, day, run, event_label='abort', onset=_clk.getTime())
+    save_stimulus_log(subj, ses, day, run)
     close_log()
     close_serial()
     win.close()
@@ -216,13 +245,6 @@ def wait_space(win, stims_to_draw, subj, ses, day, run):
         keys = event.getKeys(keyList=['space'])
         if keys:
             break
-
-def wait_fix(win, fix, dur, subj, ses, day, run):
-    t_end = _clk.getTime() + dur
-    while _clk.getTime() < t_end:
-        check_esc(win, subj, ses, day, run)
-        fix.draw()
-        win.flip()
 
 def wait_stims_timed(win, stims_to_draw, dur, subj, ses, day, run):
     """Draw stims every frame for dur seconds."""
@@ -250,8 +272,7 @@ def measure_refresh_rate(win, fallback_hz=NOMINAL_REFRESH_HZ):
               f'refresh rate -- your GPU driver/compositor is not honoring vsync for '
               f'this process, so win.flip() is returning without waiting for the real '
               f'screen refresh. This is a Windows/driver-level issue this script cannot '
-              f'fix by itself. Falling back to the confirmed panel spec: {fallback_hz} Hz. '
-              f'See the console notes printed after the run for how to fix vsync.')
+              f'fix by itself. Falling back to the confirmed panel spec: {fallback_hz} Hz.')
         return float(fallback_hz)
     print(f'[DISPLAY] Measured refresh rate: {measured:.3f} Hz')
     return float(measured)
@@ -263,22 +284,6 @@ def build_jittered_cycle_frames(n_flashes, nominal_period_s, refresh_hz,
     ON+OFF period, i.e. one inter-flash interval) should last, so the
     SPACING between consecutive flashes varies while the AVERAGE rate over
     the whole block stays locked to the nominal frequency.
-
-    Flashes are handled in PAIRS: cycle[2k] = nominal + delta,
-    cycle[2k+1] = nominal - delta, where `delta` is re-drawn for every pair
-    (magnitude up to jitter_fraction * nominal_period_s; capped at 45% of
-    the nominal period as a safety margin so a cycle can never collapse to
-    ~0 frames). Because each pair sums to exactly 2x nominal_period_s, the
-    running total time and total flash count stay identical to the
-    un-jittered schedule -- only WHEN each individual flash lands moves
-    around. (If n_flashes is odd, the last unpaired flash gets the exact
-    nominal period, since it has no partner to compensate with.)
-
-    Seconds are converted to frames via CUMULATIVE-BOUNDARY snapping
-    (target cumulative time -> round to nearest frame boundary) rather than
-    rounding each cycle length independently, so per-cycle rounding error
-    can't accumulate into a drifting block duration -- same principle as
-    the deadline-pacing already used in wait_flash().
     """
     max_delta_s = nominal_period_s * min(jitter_fraction, 0.45)
     periods_s = []
@@ -305,70 +310,43 @@ def build_jittered_cycle_frames(n_flashes, nominal_period_s, refresh_hz,
         prev_boundary = boundary
     return frame_counts, periods_s
 
-def wait_flash(win, stims_to_draw, freq, dur, refresh_hz, subj, ses, day, run, rng=None):
+def build_block_frames(freq, dur, refresh_hz, jitter_enabled, jitter_fraction, jitter_mode, rng):
     """
-    Frame-locked square-wave (ON/OFF) flashing at `freq` Hz for `dur` seconds.
-
-    Unlike wall-clock polling, this decides ON/OFF by FRAME COUNT rather
-    than elapsed time, so it stays exactly locked to the intended cycle
-    structure (dur * freq is always a whole number of cycles in
-    FREQ_SEQUENCE). It also paces each flip() to the real target time as a
-    safety net: if the GPU driver/compositor isn't honoring vsync (flip()
-    returning early instead of waiting for the real screen refresh), an
-    unpaced loop would finish the block in the wrong amount of REAL time,
-    which would silently break EEG epoch alignment even though the frame
-    count was "correct". The explicit deadline below guarantees the block's
-    actual wall-clock duration matches `dur` regardless of driver behavior.
-
-    If JITTER_ENABLED, the interval between successive flashes is varied
-    per build_jittered_cycle_frames() instead of being perfectly constant --
-    the OVERALL flash rate across the block is still exactly `freq` Hz.
+    Build the list of boolean (True=ON, False=OFF) states for every frame in a block
+    of duration `dur` at frequency `freq`.
+    Guarantees exact total frame count = round(dur * refresh_hz).
     """
-    if not JITTER_ENABLED:
-        # ── Original constant-interval implementation (unchanged) ──────
+    nominal_period_s = 1.0 / float(freq)
+    total_frames = int(round(dur * refresh_hz))
+
+    if not jitter_enabled:
         frames_per_cycle = refresh_hz / float(freq)
         half_cycle_frames = frames_per_cycle / 2.0
-        total_frames = int(round(dur * refresh_hz))
-        frame_period = 1.0 / refresh_hz
-        t_start = _clk.getTime()
+        frame_states = []
+        for f in range(total_frames):
+            phase = f % frames_per_cycle
+            frame_states.append(phase < half_cycle_frames)
+        return frame_states
+    else:
+        n_flashes = int(round(dur / nominal_period_s))
+        cycle_frames, periods_s = build_jittered_cycle_frames(
+            n_flashes, nominal_period_s, refresh_hz, jitter_fraction, jitter_mode, rng
+        )
+        print(f'[JITTER] {freq} Hz block: {n_flashes} flashes, intervals ranged '
+              f'{min(periods_s)*1000:.1f}-{max(periods_s)*1000:.1f} ms '
+              f'(nominal {nominal_period_s*1000:.1f} ms, mode={jitter_mode})')
+        frame_states = []
+        for n_cycle_frames in cycle_frames:
+            half_cycle_frames = n_cycle_frames / 2.0
+            for i in range(n_cycle_frames):
+                frame_states.append(i < half_cycle_frames)
 
-        for frame_n in range(total_frames):
-            check_esc(win, subj, ses, day, run)
-            phase = frame_n % frames_per_cycle
-            if phase < half_cycle_frames:
-                for s in stims_to_draw:
-                    s.draw()
-            target_t = t_start + (frame_n + 1) * frame_period
-            while _clk.getTime() < target_t:
-                pass
-            win.flip()
-        return
-
-    # ── Jittered inter-flash-interval implementation ───────────────────
-    nominal_period_s = 1.0 / float(freq)
-    n_flashes = int(round(dur / nominal_period_s))
-    rng = rng or random
-    cycle_frames, periods_s = build_jittered_cycle_frames(
-        n_flashes, nominal_period_s, refresh_hz, JITTER_FRACTION, JITTER_MODE, rng)
-    print(f'[JITTER] {freq} Hz block: {n_flashes} flashes, intervals ranged '
-          f'{min(periods_s)*1000:.1f}-{max(periods_s)*1000:.1f} ms '
-          f'(nominal {nominal_period_s*1000:.1f} ms, mode={JITTER_MODE})')
-
-    frame_period = 1.0 / refresh_hz
-    t_start = _clk.getTime()
-    frame_n = 0
-    for n_cycle_frames in cycle_frames:
-        half_cycle_frames = n_cycle_frames / 2.0
-        for i in range(n_cycle_frames):
-            check_esc(win, subj, ses, day, run)
-            if i < half_cycle_frames:
-                for s in stims_to_draw:
-                    s.draw()
-            target_t = t_start + (frame_n + 1) * frame_period
-            while _clk.getTime() < target_t:
-                pass
-            win.flip()
-            frame_n += 1
+        # Guard against minor rounding boundary discrepancies
+        if len(frame_states) < total_frames:
+            frame_states.extend([False] * (total_frames - len(frame_states)))
+        elif len(frame_states) > total_frames:
+            frame_states = frame_states[:total_frames]
+        return frame_states
 
 # ── MAIN EXPERIMENT ───────────────────────────────────────────────────────────
 def run_flashing():
@@ -393,8 +371,45 @@ def run_flashing():
     # Create visual stimuli
     msg = visual.TextStim(win, text='', height=0.05,
                           color='white', alignText='center', pos=(0, 0))
-    fix = visual.TextStim(win, text='+', height=0.08, color='white')
     img_stim = visual.ImageStim(win, image=None, units='norm', size=(2.0, 2.0), pos=(0, 0))
+
+    # ── Post-Flashing Visual stimuli ──────────────────────────────────────────
+    fixation_stim = visual.TextStim(
+        win,
+        text="+",
+        height=0.12,
+        color='white',
+        pos=(0, 0),
+        units='norm',
+    )
+    close_eyes_stim = visual.TextStim(
+        win,
+        text="Close Your Eyes",
+        height=0.09,
+        color='white',
+        bold=True,
+        pos=(0, 0),
+        units='norm',
+    )
+
+    # ── Beep Sound ─────────────────────────────────────────────────────────────
+    beep_snd = None
+    try:
+        # pyrefly: ignore [missing-import]
+        from psychopy import sound, prefs
+        prefs.hardware['audioLib'] = ['ptb', 'sounddevice', 'pygame']
+        prefs.hardware['audioDevice'] = ['Headphones (HBTS004)', 'default']
+        beep_snd = sound.Sound(value='C', octave=6, secs=0.6, volume=1.0)
+    except Exception as exc:
+        print(f'[AUDIO WARNING] Could not initialize beep sound: {exc}')
+
+    def play_beep():
+        if beep_snd is not None:
+            try:
+                beep_snd.stop()
+                beep_snd.play()
+            except Exception as e:
+                print(f'[AUDIO WARNING] Error playing beep: {e}')
 
     # Resolve image path
     img_path = image_name
@@ -418,70 +433,187 @@ def run_flashing():
         rect_stim = visual.Rect(win, units='norm', width=2.0, height=2.0, pos=(0, 0), fillColor=FLASH_COLOR, lineColor=FLASH_COLOR)
         stims_to_flash = [rect_stim]
 
+    # Pre-build continuous frame schedules across all frequency blocks
+    print("[SCHEDULE] Pre-building continuous frame schedules for all frequency blocks...")
+    all_frames = []
+    for blk_idx, (freq, dur) in enumerate(FREQ_SEQUENCE, start=1):
+        block_states = build_block_frames(
+            freq, dur, refresh_hz, JITTER_ENABLED, JITTER_FRACTION, JITTER_MODE, jitter_rng
+        )
+        for blk_frame_idx, is_on in enumerate(block_states):
+            all_frames.append({
+                'block_num': blk_idx,
+                'frequency_hz': freq,
+                'block_frame': blk_frame_idx,
+                'is_on': is_on,
+            })
+
+    total_duration_s = sum(dur for _, dur in FREQ_SEQUENCE)
+    total_frames = len(all_frames)
+    print(f"[SCHEDULE] Prepared {total_frames} continuous frames ({total_duration_s:.1f}s total) across {len(FREQ_SEQUENCE)} blocks.")
+
     # ── 1. Welcome Screen ─────────────────────────────────────────────────
-    msg.text = "Frequency Flashing\n\nExperiment Start Now."
+    msg.text = "Frequency Flashing\n\nExperiment Starts Soon."
     t_start = _clk.getTime()
     log(subj, ses, day, run, event_label='experiment_start',
         onset=t_start, duration=WELCOME_DUR)
     wait_stims_timed(win, [msg], WELCOME_DUR, subj, ses, day, run)
 
     # ── 2. Spacebar Prompt ────────────────────────────────────────────────
-    msg.text = "To start.\n\nPress the space bar."
+    msg.text = "To start continuous flashing,\n\nPress the space bar."
     log(subj, ses, day, run, event_label='waiting_for_space', onset=_clk.getTime())
     wait_space(win, [msg], subj, ses, day, run)
     log(subj, ses, day, run, event_label='space_pressed', onset=_clk.getTime())
 
-    # ── 3. Initial Pre-stimulus Fixation (3.5s) ───────────────────────────
-    t_fix = _clk.getTime()
-    log(subj, ses, day, run, image_name=image_name,
-        event_label='initial_fixation_onset', onset=t_fix, duration=FIXATION_DUR)
-    wait_fix(win, fix, FIXATION_DUR, subj, ses, day, run)
+    # Brief blank settle before flashing begins
+    win.flip()
+    core.wait(0.5)
 
-    # ── 4. Frequency Flashing Blocks Loop ─────────────────────────────────
-    for idx, (freq, dur) in enumerate(FREQ_SEQUENCE, start=1):
-        n_frames = int(round(dur * refresh_hz))
-        print(f"[BLOCK {idx}] Flashing at {freq} Hz for {dur} seconds "
-              f"({n_frames} frames @ {refresh_hz:.2f} Hz)...")
+    # ── 3. Continuous Flashing Loop (No breaks, 10s periodic triggers) ────
+    TWO_PI = 2.0 * math.pi
+    frame_period = 1.0 / refresh_hz
+    next_trigger_time = 0.0
 
-        # ── Show Frequency Before Flashing Starts ─────────────────────
-        print(f"[ANNOUNCEMENT] Displaying upcoming frequency: {freq} Hz...")
-        msg.text = f"Flashing Frequency:\n\n{freq} Hz"
-        t_announce = _clk.getTime()
-        log(subj, ses, day, run, block_num=idx, frequency_hz=freq, image_name=image_name,
-            event_label='frequency_announcement_onset', onset=t_announce, duration=FREQ_ANNOUNCE_DUR)
-        wait_stims_timed(win, [msg], FREQ_ANNOUNCE_DUR, subj, ses, day, run)
-        log(subj, ses, day, run, block_num=idx, frequency_hz=freq, image_name=image_name,
-            event_label='frequency_announcement_offset', onset=_clk.getTime())
+    global_clk = core.Clock()
+    t_flashing_start = _clk.getTime()
+    current_block = None
 
-        # Brief fixation before the flash and trigger
-        t_pre_fix = _clk.getTime()
-        log(subj, ses, day, run, block_num=idx, frequency_hz=freq, image_name=image_name,
-            event_label='pre_flash_fixation_onset', onset=t_pre_fix, duration=PRE_FLASH_FIX_DUR)
-        wait_fix(win, fix, PRE_FLASH_FIX_DUR, subj, ses, day, run)
+    print(f"[EXPERIMENT] Flashing started! Continuous display running through {FREQ_SEQUENCE[-1][0]} Hz...")
+    log(subj, ses, day, run, event_label='continuous_flashing_start', onset=t_flashing_start)
 
-        # ── Trigger Sent Just Before Flashing Begins ──────────────────
-        send_ttl()
-        t_flash = _clk.getTime()
-        log(subj, ses, day, run, block_num=idx, frequency_hz=freq, image_name=image_name,
-            event_label='trigger_sent', onset=t_flash)
-        log(subj, ses, day, run, block_num=idx, frequency_hz=freq, image_name=image_name,
-            event_label='flash_onset', onset=t_flash, duration=dur)
+    for global_idx, frame_info in enumerate(all_frames):
+        # 1. Check for ESC key abort
+        if event.getKeys(['escape']):
+            print("[ABORT] ESC pressed by user. Terminating flashing...")
+            send_ttl()
+            t_abort = _clk.getTime()
+            log(subj, ses, day, run, event_label='abort', onset=t_abort)
+            save_stimulus_log(subj, ses, day, run)
+            close_log()
+            close_serial()
+            win.close()
+            core.quit()
+            return
 
-        # ── Flashing Block (e.g. 8 Hz for 5s) ─────────────────────────
-        wait_flash(win, stims_to_flash, freq, dur, refresh_hz, subj, ses, day, run, rng=jitter_rng)
+        blk_num = frame_info['block_num']
+        freq = frame_info['frequency_hz']
+        blk_frame = frame_info['block_frame']
+        is_on = frame_info['is_on']
 
-        log(subj, ses, day, run, block_num=idx, frequency_hz=freq, image_name=image_name,
-            event_label='flash_offset', onset=_clk.getTime())
+        # Log transition between frequency blocks seamlessly
+        if blk_num != current_block:
+            current_block = blk_num
+            print(f"[TRANSITION] Seamless switch -> Block {blk_num}: {freq} Hz (frame {global_idx})")
+            log(subj, ses, day, run, block_num=blk_num, frequency_hz=freq, image_name=image_name,
+                event_label='frequency_block_onset', onset=_clk.getTime())
 
-        # ── 3-Second Delay Between Switching Frequency ────────────────
-        if idx < len(FREQ_SEQUENCE):
-            print(f"[INTER-BLOCK DELAY] Waiting {DELAY_DUR} seconds before next frequency...")
-            t_delay = _clk.getTime()
-            log(subj, ses, day, run, block_num=idx, frequency_hz=freq, image_name=image_name,
-                event_label='delay_onset', onset=t_delay, duration=DELAY_DUR)
-            wait_fix(win, fix, DELAY_DUR, subj, ses, day, run)
-            log(subj, ses, day, run, block_num=idx, frequency_hz=freq, image_name=image_name,
-                event_label='delay_offset', onset=_clk.getTime())
+        # 2. Draw stimulus if state is ON
+        if is_on:
+            for s in stims_to_flash:
+                s.draw()
+
+        # 3. Schedule TTL Trigger every 10 seconds (including t = 0.0s)
+        t_flip_target = global_idx * frame_period
+        is_trigger_frame = 0
+        if t_flip_target >= next_trigger_time - (frame_period * 0.5):
+            is_trigger_frame = 1
+            win.callOnFlip(send_ttl)
+            next_trigger_time += TRIGGER_INTERVAL_S
+            log(subj, ses, day, run, block_num=blk_num, frequency_hz=freq, image_name=image_name,
+                event_label='trigger_sent', onset=_clk.getTime())
+
+        # 4. Pace to real-time vsync deadline
+        target_t = t_flashing_start + (global_idx + 1) * frame_period
+        while _clk.getTime() < target_t:
+            pass
+
+        # 5. Flip display buffer (hardware VSync)
+        win.flip()
+
+        # 6. Record frame stimulus state and trigger status for phase locking
+        g_time = global_clk.getTime()
+        time_s = (blk_frame + 1) * frame_period
+        phase_rad = (TWO_PI * freq * time_s) % TWO_PI
+        phase_deg = round(math.degrees(phase_rad), 2)
+
+        _stimulus_log.append({
+            'time_s':         round(time_s, 6),
+            'global_time_s':  round(g_time, 6),
+            'frame':          global_idx,
+            'block_frame':    blk_frame,
+            'block_num':      blk_num,
+            'frequency_hz':   freq,
+            'stimulus_state': 'ON' if is_on else 'OFF',
+            'phase_rad':      round(phase_rad, 4),
+            'phase_deg':      phase_deg,
+            'trigger_sent':   is_trigger_frame,
+            'cycle':          blk_num,
+            'breath_phase':   f"{freq}Hz",
+        })
+
+    # Log end of continuous flashing
+    t_flashing_end = _clk.getTime()
+    log(subj, ses, day, run, event_label='continuous_flashing_end', onset=t_flashing_end)
+    print(f"[EXPERIMENT] Continuous flashing completed successfully ({len(_stimulus_log)} frames).")
+
+    # ── 4. POST-FLASHING REST PHASE (Fixation & Eyes-Closed) ─────────────
+    # 1. Trigger when the continuous flashing finishes
+    print('[TTL] Flashing complete. Sending trigger.')
+    send_ttl()
+    log(subj, ses, day, run, event_label='flashing_complete_trigger', onset=_clk.getTime())
+
+    # 2. Fixation Screen (30s total, "Close Your Eyes" displayed in final second)
+    print(f'[POST-FLASH] Fixation screen for {POST_FLASH_FIXATION_DUR}s (showing "Close Your Eyes" at final sec)...')
+    log(subj, ses, day, run, event_label='fixation_start', onset=_clk.getTime(), duration=POST_FLASH_FIXATION_DUR)
+    fix_clk = core.Clock()
+    while fix_clk.getTime() < POST_FLASH_FIXATION_DUR:
+        if event.getKeys(['escape']):
+            if beep_snd is not None:
+                beep_snd.stop()
+            abort(win, subj, ses, day, run)
+            return
+
+        t = fix_clk.getTime()
+        if t >= (POST_FLASH_FIXATION_DUR - 1.0):
+            close_eyes_stim.draw()
+        else:
+            fixation_stim.draw()
+
+        win.flip()
+
+    # 3. Followed by Beep and transition to 1-minute Blank Screen
+    print('[AUDIO] Playing "Close Your Eyes" beep...')
+    play_beep()
+
+    # Clear screen to black/background
+    win.color = 'black'
+    win.flip()
+
+    # Trigger sent when blank screen appears
+    print(f'[TTL] Blank screen starting ({EYES_CLOSED_DUR}s eyes-closed). Sending trigger.')
+    send_ttl()
+    log(subj, ses, day, run, event_label='eyes_closed_start', onset=_clk.getTime(), duration=EYES_CLOSED_DUR)
+
+    blank_clk = core.Clock()
+    while blank_clk.getTime() < EYES_CLOSED_DUR:
+        if event.getKeys(['escape']):
+            if beep_snd is not None:
+                beep_snd.stop()
+            abort(win, subj, ses, day, run)
+            return
+
+        win.flip()
+
+    # 4. End of 1 minute: Play beep sound, send trigger, and finish
+    print('[AUDIO] 1-minute eyes-closed complete. Playing final beep...')
+    play_beep()
+
+    print('[TTL] Experiment finished. Sending trigger.')
+    send_ttl()
+    log(subj, ses, day, run, event_label='eyes_closed_end', onset=_clk.getTime())
+
+    # Small delay to let the final beep finish playing
+    core.wait(1.0)
 
     # ── 5. Goodbye Screen ─────────────────────────────────────────────────
     msg.text = "End of the session.\nThank you."
@@ -490,7 +622,8 @@ def run_flashing():
         onset=t_end, duration=GOODBYE_DUR)
     wait_stims_timed(win, [msg], GOODBYE_DUR, subj, ses, day, run)
 
-    # ── Cleanup ───────────────────────────────────────────────────────────
+    # ── 6. Save Logs & Cleanup ────────────────────────────────────────────
+    save_stimulus_log(subj, ses, day, run)
     close_log()
     close_serial()
     win.close()

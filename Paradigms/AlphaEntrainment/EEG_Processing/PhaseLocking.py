@@ -1,52 +1,4 @@
-#!/usr/bin/env python3
-"""
-phase_locking_analysis.py
-==========================
-
-Measures phase locking between a visual flicker stimulus (logged frame-by-frame
-in a PsychoPy `stimulus_log.csv`, as produced by guidedBreathing_Flash.py) and
-an EEG recording (.edf) that contains a hardware TTL trigger on one channel
-(default: 'DC7'), sent once per breath cycle at the exact video-refresh flip
-that the flicker starts.
-
-WHY THIS APPROACH
-------------------
-1. The flicker is NOT one continuous sinusoid across the whole recording.
-   Each call to flash_phase() in guidedBreathing_Flash.py restarts frame_n at 0,
-   so the ON/OFF square wave's phase resets at every inhale->exhale and
-   exhale->inhale boundary (54 resets across 27 cycles). Any analysis that
-   assumes a single continuous carrier phase from t=0 will be wrong. Instead,
-   this script reconstructs the *exact* stimulus waveform frame-by-frame from
-   the CSV (which already encodes those resets correctly) and treats that as
-   ground truth.
-
-2. The CSV's time base is the stimulus PC's clock (global_time_s, zeroed at
-   the very first flicker frame). The EDF's time base is the amplifier's
-   internal clock. The two clocks are neither perfectly synchronized in
-   offset nor (usually) in rate. This script recovers both an offset AND a
-   rate correction (i.e. clock drift) by fitting a straight line between the
-   27 CSV-logged cycle-onset triggers and the matching pulses detected on the
-   DC7 channel, rather than just anchoring on the first trigger.
-
-3. "Phase locking between the two" is quantified three complementary ways:
-     a) Continuous PLV  - Hilbert phase of a reconstructed reference stimulus
-        waveform vs Hilbert phase of the (narrowband-filtered) EEG, over the
-        whole entrainment period. This is the most literal reading of
-        "phase locking between stimulus and EEG".
-     b) Trial-locked ITPC - classic SSVEP inter-trial phase coherence,
-        epoching the EEG to each of the 27 cycle-onset triggers.
-     c) Spectral SNR - Welch PSD peak at the flicker frequency (and 2nd
-        harmonic) during flicker-on segments.
-
-USAGE
------
-Edit the CONFIG block below (EDF_PATH at minimum), then:
-    python3 phase_locking_analysis.py
-
-Requires: numpy, scipy, pandas, mne, matplotlib
-    pip install mne  (mne pulls in edfio/numpy/scipy already)
-"""
-
+#!/usr/bin/env python3``
 import os
 import warnings
 
@@ -69,14 +21,14 @@ mne.set_log_level("ERROR")
 # ============================================================================
 # CONFIG - edit these for your session
 # ============================================================================
-EDF_PATH = r"C:\Users\saiik\Downloads\MIRIAM EXPT\SHAMLIN_SUB3\POST ENTRAINEMNT\SUB03~ SHAMLIN_e41648ef-8499-4014-9715-fa32f6961a5a.edf"           # <-- point this at your .edf file
+EDF_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\ARYA_SUB10\arya control\SUB10~ ARYA_95a157e5-6c2b-48f6-bd54-848757e083e0.edf" # <-- point this at your .edf file
 STIMULUS_CSV_PATH =r"C:\Users\saiik\OneDrive\Documents\GitHub\AIMS_Research\Paradigms\AlphaEntrainment\data\stimulus_log.csv"
 
 REFERENCE_CHANNEL = "Cz"                   # Reference channel to remove noise
 REREFERENCE_CHANNELS = ["O1", "O2"]        # Re-derived as bipolar (O1 - Cz, O2 - Cz)
 EEG_CHANNELS = ["O1", "O2"]                # Only analyze O1 and O2 channels for phase locking
 
-DC7_CHANNEL_NAME = "DC7"                   # Trigger channel name in the EDF
+DC7_CHANNEL_NAME = "DC1"                   # Trigger channel name in the EDF
 DC7_THRESHOLD = 0.005                      # Threshold on deviation from baseline to isolate ~30 TTL pulses
 
 # Channels to auto-exclude if EEG_CHANNELS is set to None
@@ -399,8 +351,7 @@ def analyze_channel(ch_name, raw, csv_df, flicker_freq, eeg_trigger_times_matche
             cycle_plvs.append(np.nan)
     cycle_plvs = np.array(cycle_plvs)
 
-    # ITPC locked to trigger onset (classic SSVEP check) - uses continuous
-    # narrowband EEG phase, epoched around each cycle-onset trigger.
+
     pre, post = int(EPOCH_TMIN * sfreq), int(EPOCH_TMAX * sfreq)
     epochs = []
     for trig_t in eeg_trigger_times_matched:
