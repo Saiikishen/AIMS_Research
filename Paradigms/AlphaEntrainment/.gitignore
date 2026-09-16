@@ -2,3 +2,4 @@
 __pycache__/
 .pytest_cache/
 phase_locking_results/
+hrv_results/

@@ -12,7 +12,7 @@ from scipy.signal import welch
 
 
 
-EDF_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\Jacob_sub15\trial 2.edf"
+EDF_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\SUB_18 RISHIKA\SUB18~ RISHIKA_8c46c1db-861c-4e9f-9fcf-361e528d4548.edf"
 
 # Manually inspected clean windows (seconds from recording start)
 EYES_CLOSED_TMIN = 75
