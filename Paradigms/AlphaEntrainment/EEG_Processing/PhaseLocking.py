@@ -25,8 +25,8 @@ mne.set_log_level("ERROR")
 # ============================================================================
 # CONFIG - edit these for your session
 # ============================================================================
-EDF_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\Jacob_sub15\flashing.edf"
-STIMULUS_CSV_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\Jacob_sub15\flashing excel\stimulus_log.csv"
+EDF_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\SOORYA_SUB25\FLASHING\SUB25~ SOORYA_f2176633-0404-4147-9398-405dcda2c9ba.edf"
+STIMULUS_CSV_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\SOORYA_SUB25\flashing stimulus\stimulus_log.csv"
 
 REFERENCE_CHANNEL = "Cz"                   # Reference channel to remove noise
 REREFERENCE_CHANNELS = ["O1", "O2"]        # Re-derived as bipolar (O1 - Cz, O2 - Cz)

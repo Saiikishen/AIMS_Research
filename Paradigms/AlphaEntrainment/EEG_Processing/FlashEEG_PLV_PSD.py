@@ -8,19 +8,18 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
 if __package__:
     from . import PhaseLocking as phase
 else:
     import PhaseLocking as phase
 
 
-# CONFIG - retain the matching EDF and stimulus CSV for the current subject.
+# CONFIG 
 EDF_PATH = (
-    r"C:\Users\saiik\Downloads\miriam expt edf\Jacob_sub15\CONTROL\SUB15~ JACOB_0e04f0e8-fb17-4f50-8a72-31c9e4d27116.edf"
+    r"C:\Users\saiik\Downloads\miriam expt edf\KUMARAN_SUB13\CONTROL\SUB15~ KUMARAN_bd7f4d18-d27a-4073-99f1-a8bce0e7aff7.edf"
 )
 STIMULUS_CSV_PATH = (
-    r"C:\Users\saiik\Downloads\miriam expt edf\Jacob_sub15\control excel\stimulus_log.csv"
+    r"C:\Users\saiik\Downloads\miriam expt edf\KUMARAN_SUB13\CONTROL\control stimulus1\stimulus_log.csv"
 )
 
 REFERENCE_CHANNEL = "Cz"
