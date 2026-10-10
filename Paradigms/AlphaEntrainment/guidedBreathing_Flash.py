@@ -52,9 +52,9 @@ def close_serial():
 
 # ── CONFIGURATION ─────────────────────────────────────────────────────────────
 INHALE_DUR        = 4.0       # seconds for breathe-IN  phase
-HOLD_DUR          = 0.0       # seconds for hold-breath phase (set 0 to skip)
+HOLD_DUR          = 0.0      # seconds for hold-breath phase (set 0 to skip)
 EXHALE_DUR        = 6.0       # seconds for breathe-OUT phase
-NUM_CYCLES        = 27      # number of complete breath cycles (0 = infinite)
+NUM_CYCLES        = 25    # number of complete breath cycles (0 = infinite)
 FULLSCREEN        = True
 
 # ── POST-BREATHING REST & EYES-CLOSED CONFIGURATION ───────────────────────────

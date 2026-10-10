@@ -25,8 +25,8 @@ mne.set_log_level("ERROR")
 # ============================================================================
 # CONFIG - edit these for your session
 # ============================================================================
-EDF_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\SOORYA_SUB25\FLASHING\SUB25~ SOORYA_f2176633-0404-4147-9398-405dcda2c9ba.edf"
-STIMULUS_CSV_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\SOORYA_SUB25\flashing stimulus\stimulus_log.csv"
+EDF_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\dataset #4\MRIDUL_SUB27\FLASHING\SUB27~ MRIDUL_e886c48a-5c51-4654-8466-22148860ba27.edf"
+STIMULUS_CSV_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\dataset #4\MRIDUL_SUB27\data\stimulus_log.csv"
 
 REFERENCE_CHANNEL = "Cz"                   # Reference channel to remove noise
 REREFERENCE_CHANNELS = ["O1", "O2"]        # Re-derived as bipolar (O1 - Cz, O2 - Cz)
@@ -46,6 +46,7 @@ FILTER_ORDER = 4
 # for both EEG and stimulus. This extra band-pass NEVER feeds the PSD branch.
 PHASE_HALF_BANDWIDTH_HZ = 0.5    # f0 +/- 1 Hz, fixed across subjects
 TRIGGER_MATCH_WARN_TOL_S = 0.05   # Warn if best-fit trigger alignment residual exceeds this
+TRIGGER_MATCH_TOL_S = 0.2        # Maximum CSV/EDF trigger-pair error
 MIN_TRIGGER_ISI_S = 1.0           # Refractory period for trigger detection (cycles are ~10s apart)
 MERGE_ASOF_TOL_S = 0.05           # Max gap allowed when mapping an EEG sample to a CSV frame
 
@@ -53,10 +54,13 @@ EPOCH_TMIN, EPOCH_TMAX = -1.0, 10.0   # Window around each cycle-onset trigger f
 SLIDING_PLV_WIN_S, SLIDING_PLV_STEP_S = 2.0, 0.5
 BOUNDARY_EXCLUDE_S = 0.5           # seconds to exclude around each phase-reset boundary (filter ringing)
 
-# Protocol: trigger 25 marks flash OFFSET; later triggers are breathing only.
-# One-based CSV trigger number, not a count of arbitrary EDF pulses.
-FLASH_STOP_TRIGGER_NUMBER = 25
-AFTER_FLASH_DELAY_S = 15.0        # Preserve the start after the LAST matched trigger
+# None: locate offset using the frame-log end and post-flash marker sequence.
+# Set a one-based CSV trigger number only for a log with an explicit offset row.
+FLASH_STOP_TRIGGER_NUMBER = None
+# Offset -> fixation end -> eyes-closed end, from guidedBreathing_Flash.py.
+# Set to None only for protocols without this marker sequence.
+POST_FLASH_MARKER_INTERVALS_S = (30.0, 60.0)
+AFTER_FLASH_DELAY_S = 15.0        # Delay after flash offset, not the last cycle onset
 
 # Frequency filtering only: no amplitude, flatline or BAD-annotation rejection.
 # Nonfinite samples remain gaps so they cannot propagate through the transforms.
@@ -74,7 +78,7 @@ OUTPUT_DIR = "phase_locking_results"
 def load_stimulus_log(csv_path):
     """Load the PsychoPy stimulus log and derive:
       - the flicker frequency (fit from the phase data itself, not assumed)
-      - the CSV-clock (global_time_s) times of the 27 cycle-onset triggers
+      - the CSV-clock (global_time_s) times of the cycle-onset triggers
       - a fast lookup table for reconstructing the logged ON/OFF square wave
         at any arbitrary query time (used to build the reference signal in
         EEG time later).
@@ -217,46 +221,108 @@ def detect_dc7_triggers(raw, dc7_name=DC7_CHANNEL_NAME, threshold=DC7_THRESHOLD,
 # 3. CLOCK ALIGNMENT (CSV clock <-> EDF clock)
 # ============================================================================
 
+def find_protocol_flash_offset(eeg_trigger_times):
+    """Identify offset from an unambiguous sequence of consecutive rest markers."""
+    if POST_FLASH_MARKER_INTERVALS_S is None:
+        return None
+    intervals = np.asarray(POST_FLASH_MARKER_INTERVALS_S, dtype=float)
+    if (intervals.ndim != 1 or len(intervals) < 2 or not np.isfinite(intervals).all()
+            or np.any(intervals <= 2 * TRIGGER_MATCH_TOL_S)):
+        raise ValueError("POST_FLASH_MARKER_INTERVALS_S needs at least two positive intervals.")
+    times = np.asarray(eeg_trigger_times, dtype=float)
+    gaps = np.diff(times)
+    # Do not skip intervening pulses: regular cycle onsets also span 30/60 s.
+    candidates = [times[i] for i in range(len(times) - len(intervals))
+                  if np.all(np.abs(gaps[i:i + len(intervals)] - intervals)
+                            < TRIGGER_MATCH_TOL_S)]
+    if len(candidates) > 1:
+        raise ValueError("Multiple post-flash marker sequences found; check the session/protocol "
+                         "or specify an explicit CSV offset marker.")
+    if not candidates:
+        return None
+    stop = float(candidates[0])
+    print(f"[protocol] offset anchor at {stop:.3f}s EDF time from post-flash "
+          f"marker intervals {intervals.tolist()}s")
+    return stop
+
+
 def match_and_fit_time_mapping(csv_trigger_times, eeg_trigger_times,
-                                warn_tol_s=TRIGGER_MATCH_WARN_TOL_S):
+                                warn_tol_s=TRIGGER_MATCH_WARN_TOL_S,
+                                csv_stop_time=None, eeg_stop_time=None):
     """Match CSV cycle triggers with detected EEG triggers on DC7 and fit a straight line
         t_eeg = slope * t_csv + intercept
     accounting for clock drift (slope != 1) and offset (intercept).
-    Robustly handles extra post-cycle triggers and any dropped/missing pulses."""
-    if len(eeg_trigger_times) < 3:
-        raise ValueError(
-            f"Only {len(eeg_trigger_times)} triggers detected on DC7. "
-            f"Check DC7_CHANNEL_NAME / DC7_THRESHOLD."
-        )
+    Refit and rematch until the one-to-one pairing stabilizes. An independently
+    identified offset, when supplied, prevents slips by a whole breathing cycle.
+    Return matched CSV indices so missing pulses retain their cycle identity.
+    """
+    csv_trigger_times = np.asarray(csv_trigger_times, dtype=float)
+    eeg_trigger_times = np.asarray(eeg_trigger_times, dtype=float)
+    for name, times in (("CSV", csv_trigger_times), ("EDF", eeg_trigger_times)):
+        if (times.ndim != 1 or len(times) < 3 or not np.isfinite(times).all()
+                or np.any(np.diff(times) <= 0)):
+            raise ValueError(f"{name} needs at least 3 finite, strictly increasing triggers.")
+    if (csv_stop_time is None) != (eeg_stop_time is None):
+        raise ValueError("Supply both CSV and EDF offset times, or neither.")
+    anchored = eeg_stop_time is not None
+    if anchored and (not np.isfinite([csv_stop_time, eeg_stop_time]).all()
+                     or csv_stop_time <= csv_trigger_times[-1]):
+        raise ValueError("The offset anchor must be finite and follow the last CSV onset.")
 
-    # Search for best initial alignment using RANSAC / maximum-inlier approach
-    best_inliers = None
+    def match(slope, intercept):
+        csv_indices, eeg_indices = [], []
+        last_eeg_index = -1
+        for i, predicted in enumerate(slope * csv_trigger_times + intercept):
+            diffs = np.abs(eeg_trigger_times - predicted)
+            diffs[:last_eeg_index + 1] = np.inf  # ordered, unique pulse matches
+            if anchored:
+                diffs[eeg_trigger_times >= eeg_stop_time] = np.inf
+            j = int(np.argmin(diffs))
+            if diffs[j] < TRIGGER_MATCH_TOL_S:
+                csv_indices.append(i)
+                eeg_indices.append(j)
+                last_eeg_index = j
+        return np.array(csv_indices, dtype=int), np.array(eeg_indices, dtype=int)
+
+    seed_slopes = [1.0]
+    interval_ratio = np.median(np.diff(eeg_trigger_times)) / np.median(np.diff(csv_trigger_times))
+    if 0.95 <= interval_ratio <= 1.05:
+        seed_slopes.append(interval_ratio)
+    best = None
     best_count = 0
+    for seed_slope in seed_slopes:
+        for csv_t0 in csv_trigger_times[:5]:
+            for eeg_t0 in eeg_trigger_times[:10]:
+                slope = seed_slope
+                intercept = eeg_t0 - slope * csv_t0
+                ci, ei = match(slope, intercept)
+                for _ in range(20):
+                    if len(ci) < 3:
+                        break
+                    slope, intercept = np.polyfit(csv_trigger_times[ci], eeg_trigger_times[ei], 1)
+                    if not 0.95 <= slope <= 1.05:
+                        break
+                    next_ci, next_ei = match(slope, intercept)
+                    if np.array_equal(ci, next_ci) and np.array_equal(ei, next_ei):
+                        if anchored and abs(slope * csv_stop_time + intercept - eeg_stop_time) >= TRIGGER_MATCH_TOL_S:
+                            break
+                        # Equal-coverage periodic matches retain the earliest seed.
+                        if len(ci) > best_count:
+                            best_count = len(ci)
+                            best = slope, intercept, ci, ei
+                        break
+                    ci, ei = next_ci, next_ei
 
-    for csv_t0 in csv_trigger_times[:5]:
-        for eeg_t0 in eeg_trigger_times[:10]:
-            cand_intercept = eeg_t0 - 1.0 * csv_t0
-            cand_csv_matched = []
-            cand_eeg_matched = []
-            for ct in csv_trigger_times:
-                predicted_et = 1.0 * ct + cand_intercept
-                diffs = np.abs(eeg_trigger_times - predicted_et)
-                min_idx = np.argmin(diffs)
-                if diffs[min_idx] < 0.2:  # within 200 ms
-                    cand_csv_matched.append(ct)
-                    cand_eeg_matched.append(eeg_trigger_times[min_idx])
-            if len(cand_csv_matched) > best_count:
-                best_count = len(cand_csv_matched)
-                best_inliers = (np.array(cand_csv_matched), np.array(cand_eeg_matched))
-
-    if best_inliers is None or len(best_inliers[0]) < 3:
+    if best is None or best_count < max(3, int(np.ceil(len(csv_trigger_times) / 2))):
         raise ValueError(
-            f"Could not find consistent trigger alignment between {len(csv_trigger_times)} "
-            f"CSV triggers and {len(eeg_trigger_times)} EDF triggers."
+            f"Could not align enough triggers: best match was {best_count} of "
+            f"{len(csv_trigger_times)} CSV triggers ({len(eeg_trigger_times)} EDF pulses). "
+            "Check that CSV and EDF belong to the same session and inspect DC7 detection."
         )
 
-    matched_csv_times, matched_eeg_times = best_inliers
-    slope, intercept = np.polyfit(matched_csv_times, matched_eeg_times, 1)
+    slope, intercept, csv_indices, eeg_indices = best
+    matched_csv_times = csv_trigger_times[csv_indices]
+    matched_eeg_times = eeg_trigger_times[eeg_indices]
     fitted = slope * matched_csv_times + intercept
     residuals = matched_eeg_times - fitted
     max_resid_ms = np.max(np.abs(residuals)) * 1000
@@ -270,12 +336,15 @@ def match_and_fit_time_mapping(csv_trigger_times, eeg_trigger_times,
         print(f"[align][WARNING] residual exceeds {warn_tol_s*1000:.0f} ms - "
               f"double check DC7 detection / that no triggers were misidentified.")
 
-    if len(eeg_trigger_times) > len(matched_eeg_times):
-        n_extra = len(eeg_trigger_times) - len(matched_eeg_times)
-        print(f"[align] note: {n_extra} extra DC7 pulse(s) detected beyond the matched "
-              f"cycle-onset triggers (e.g., post-breathing fixation / eyes-closed / end triggers).")
+    missing = np.setdiff1d(np.arange(len(csv_trigger_times)), csv_indices) + 1
+    if len(missing):
+        print(f"[align][WARNING] CSV trigger(s) without a detected EDF match: {missing.tolist()}")
+    n_unmatched = len(eeg_trigger_times) - len(matched_eeg_times)
+    if n_unmatched:
+        print(f"[align] {n_unmatched} DC7 pulse(s) unmatched to CSV cycle onsets; "
+              "these may include flash offset and later protocol markers.")
 
-    return slope, intercept, matched_eeg_times, residuals
+    return slope, intercept, csv_indices, matched_eeg_times, residuals
 
 
 # ============================================================================
@@ -288,20 +357,58 @@ def contiguous_runs(mask):
     return zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1))
 
 
-def flashing_period(csv_df, csv_triggers, matched_eeg_triggers, slope, intercept):
-    """Use the specified flash-offset marker; keep later markers for clock fitting."""
-    if not 2 <= FLASH_STOP_TRIGGER_NUMBER <= len(csv_triggers):
-        raise ValueError("FLASH_STOP_TRIGGER_NUMBER must identify a logged offset trigger.")
-    stop_csv = csv_triggers[FLASH_STOP_TRIGGER_NUMBER - 1]
+def flashing_period(csv_df, csv_triggers, eeg_triggers, matched_eeg_triggers, slope, intercept,
+                    protocol_stop_eeg=None):
+    """Locate a measured offset pulse using the frame-log end or an explicit marker."""
+    if FLASH_STOP_TRIGGER_NUMBER is None:
+        stop_csv = float(csv_df["global_time_s"].max())
+        candidates = eeg_triggers[~np.isin(eeg_triggers, matched_eeg_triggers)]
+        candidates = candidates[candidates > slope * csv_triggers[-1] + intercept]
+        if protocol_stop_eeg is not None:
+            candidates = candidates[candidates == protocol_stop_eeg]
+        flash_df = csv_df.copy()
+        marker = ("post-flash marker sequence" if protocol_stop_eeg is not None
+                  else "EDF pulse near the end of the frame log")
+    else:
+        if not 2 <= FLASH_STOP_TRIGGER_NUMBER <= len(csv_triggers):
+            raise ValueError("FLASH_STOP_TRIGGER_NUMBER must identify a logged offset trigger.")
+        stop_csv = csv_triggers[FLASH_STOP_TRIGGER_NUMBER - 1]
+        candidates = matched_eeg_triggers
+        flash_df = csv_df.loc[csv_df["global_time_s"] < stop_csv].copy()
+        marker = f"explicit CSV offset trigger {FLASH_STOP_TRIGGER_NUMBER}"
     predicted_stop = slope * stop_csv + intercept
-    nearest = np.argmin(np.abs(matched_eeg_triggers - predicted_stop))
-    stop_eeg = matched_eeg_triggers[nearest]
-    if abs(stop_eeg - predicted_stop) >= 0.2:
-        raise ValueError("Flash-offset trigger was not matched; check the trigger alignment.")
-    flash_df = csv_df.loc[csv_df["global_time_s"] < stop_csv].copy()
-    print(f"[protocol] flashing stops at trigger {FLASH_STOP_TRIGGER_NUMBER}: "
-          f"{stop_eeg:.3f}s EDF time; subsequent markers are breathing only")
+    if not len(candidates):
+        raise ValueError(f"No eligible flash-offset pulse near {predicted_stop:.3f}s EDF time. "
+                         "Check the frame log, protocol and DC7 detection.")
+    stop_eeg = candidates[np.argmin(np.abs(candidates - predicted_stop))]
+    if abs(stop_eeg - predicted_stop) >= TRIGGER_MATCH_TOL_S:
+        raise ValueError(
+            f"Flash-offset pulse not found within {TRIGGER_MATCH_TOL_S:.3f}s of "
+            f"{predicted_stop:.3f}s EDF time (nearest eligible pulse: {stop_eeg:.3f}s). "
+            "Check the frame log, protocol and trigger alignment."
+        )
+    print(f"[protocol] flashing stops at {stop_eeg:.3f}s EDF time ({marker})")
     return flash_df, stop_eeg
+
+
+def cycle_timing(csv_triggers, matched_csv_indices, matched_eeg_triggers,
+                 slope, intercept, flash_stop_eeg):
+    """Keep every logged cycle, flagging onsets inferred from the clock fit."""
+    onsets = slope * np.asarray(csv_triggers) + intercept
+    detected = np.zeros(len(onsets), dtype=bool)
+    onsets[matched_csv_indices] = matched_eeg_triggers
+    detected[matched_csv_indices] = True
+    keep = onsets < flash_stop_eeg
+    onsets, detected = onsets[keep], detected[keep]
+    if np.any(np.diff(onsets) <= 0):
+        raise ValueError("Fitted and measured cycle boundaries are not strictly increasing.")
+    if not detected.all():
+        print(f"[protocol] {np.sum(~detected)} cycle onset(s) estimated from the clock fit; "
+              "flagged in cycle CSV output and excluded from trigger-locked ITPC")
+    if len(onsets) and onsets[0] < 0:
+        print(f"[protocol][WARNING] first logged onset maps to {onsets[0]:.3f}s, "
+              "before EDF start; the initial cycle is only partially recorded")
+    return onsets, detected
 
 
 def frequency_filter(x, sfreq):
@@ -441,8 +548,8 @@ def sliding_plv(phase_a, phase_b, sfreq, valid_mask, win_s=SLIDING_PLV_WIN_S,
 # 5. MAIN ANALYSIS PER CHANNEL
 # ============================================================================
 
-def analyze_channel(ch_name, raw, csv_df, flicker_freq, eeg_trigger_times_matched,
-                     slope, intercept, out_dir, flash_stop_eeg):
+def analyze_channel(ch_name, raw, csv_df, flicker_freq, cycle_onsets_eeg,
+                     cycle_onsets_detected, slope, intercept, out_dir, flash_stop_eeg):
     sfreq = raw.info["sfreq"]
     eeg = raw.get_data(picks=[ch_name])[0]
     n = len(eeg)
@@ -486,10 +593,10 @@ def analyze_channel(ch_name, raw, csv_df, flicker_freq, eeg_trigger_times_matche
     mean_lag_rad = np.angle(np.mean(np.exp(1j * (ref_phase[valid_mask] - eeg_phase[valid_mask]))))
     mean_lag_ms = (mean_lag_rad / (2 * np.pi * flicker_freq)) * 1000
 
-    # Trigger 25 is the end boundary, not another flashing onset. The full
-    # matched list is retained separately for the original After Flash timing.
-    flash_onsets = eeg_trigger_times_matched[eeg_trigger_times_matched < flash_stop_eeg]
-    cycle_boundaries = np.r_[flash_onsets, flash_stop_eeg]
+    # Missing pulses must not merge cycles or shift subsequent cycle numbers.
+    flash_onsets = cycle_onsets_eeg[cycle_onsets_detected]
+    cycle_boundaries = np.r_[cycle_onsets_eeg, flash_stop_eeg]
+    boundary_detected = np.r_[cycle_onsets_detected, True]  # measured offset TTL
     cycle_plvs = []
     cycle_rows = []
     for cycle_number, (t0, t1) in enumerate(zip(cycle_boundaries[:-1], cycle_boundaries[1:]), 1):
@@ -501,6 +608,8 @@ def analyze_channel(ch_name, raw, csv_df, flicker_freq, eeg_trigger_times_matche
         cycle_plvs.append(plv)
         cycle_rows.append({
             "cycle": cycle_number, "start_s": t0, "stop_s": t1,
+            "start_trigger_detected": bool(boundary_detected[cycle_number - 1]),
+            "stop_trigger_detected": bool(boundary_detected[cycle_number]),
             "duration_s": t1 - t0, "usable_phase_s": usable_s,
             "usable_phase_fraction": sl_mask.sum() / cycle_mask.sum() if cycle_mask.any() else 0.0,
             "plv": plv, "plv_available": bool(np.isfinite(plv)),
@@ -526,9 +635,8 @@ def analyze_channel(ch_name, raw, csv_df, flicker_freq, eeg_trigger_times_matche
         epochs = np.array(epochs)
         itpc = np.abs(np.mean(np.exp(1j * epochs), axis=0))
 
-    # Keep the user's original comparison interval: 15s after the last matched
-    # trigger through recording end. Use the filtered signal for both PSDs.
-    after_flash_start = eeg_trigger_times_matched[-1] + AFTER_FLASH_DELAY_S
+    # A final cycle onset precedes offset by a full cycle in standard logs.
+    after_flash_start = flash_stop_eeg + AFTER_FLASH_DELAY_S
     after_flash_mask = (eeg_times > after_flash_start) & np.isfinite(filtered_eeg)
     f_on, pxx_on, on_windows = contiguous_welch(filtered_eeg, sfreq, psd_on_mask)
     f_after, pxx_after, after_windows = contiguous_welch(filtered_eeg, sfreq, after_flash_mask)
@@ -635,6 +743,7 @@ def analyze_channel(ch_name, raw, csv_df, flicker_freq, eeg_trigger_times_matche
         "usable_phase_s": valid_mask.sum() / sfreq,
         "plv_cycles": plv_cycle_count,
         "flashing_cycles": len(cycle_plvs),
+        "estimated_cycle_onsets": int(np.sum(~cycle_onsets_detected)),
         "plv_cycle_coverage": cycle_coverage,
         "itpc_epochs": itpc_epoch_count,
         "psd_during_flash_windows": on_windows,
@@ -658,6 +767,7 @@ def pick_eeg_channels(raw):
 
 
 def main():
+    print(f"[script] {os.path.abspath(__file__)} | alignment: protocol-anchored")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     csv_df, flicker_freq, csv_trigger_times = load_stimulus_log(STIMULUS_CSV_PATH)
@@ -669,10 +779,18 @@ def main():
     # 2. Re-reference O1 and O2 against Cz (O1 - Cz, O2 - Cz)
     raw = rereference_to_channel(raw, REREFERENCE_CHANNELS, REFERENCE_CHANNEL)
 
-    slope, intercept, matched_eeg_trig, residuals = match_and_fit_time_mapping(
-        csv_trigger_times, eeg_trigger_times)
+    protocol_stop_eeg = (find_protocol_flash_offset(eeg_trigger_times)
+                         if FLASH_STOP_TRIGGER_NUMBER is None else None)
+    csv_stop_time = (float(csv_df["global_time_s"].max())
+                     if protocol_stop_eeg is not None else None)
+    slope, intercept, matched_csv_indices, matched_eeg_trig, residuals = match_and_fit_time_mapping(
+        csv_trigger_times, eeg_trigger_times,
+        csv_stop_time=csv_stop_time, eeg_stop_time=protocol_stop_eeg)
     flash_df, flash_stop_eeg = flashing_period(
-        csv_df, csv_trigger_times, matched_eeg_trig, slope, intercept)
+        csv_df, csv_trigger_times, eeg_trigger_times, matched_eeg_trig, slope, intercept,
+        protocol_stop_eeg=protocol_stop_eeg)
+    cycle_onsets_eeg, cycle_onsets_detected = cycle_timing(
+        csv_trigger_times, matched_csv_indices, matched_eeg_trig, slope, intercept, flash_stop_eeg)
     alignment_max_ms = np.max(np.abs(residuals)) * 1000
     alignment_rms_ms = np.sqrt(np.mean(residuals ** 2)) * 1000
     alignment_phase_deg = alignment_max_ms / 1000 * flicker_freq * 360
@@ -703,12 +821,16 @@ def main():
 
     results = []
     for ch in channels:
-        r = analyze_channel(ch, raw, flash_df, flicker_freq, matched_eeg_trig,
-                             slope, intercept, OUTPUT_DIR, flash_stop_eeg)
+        r = analyze_channel(ch, raw, flash_df, flicker_freq, cycle_onsets_eeg,
+                             cycle_onsets_detected, slope, intercept, OUTPUT_DIR, flash_stop_eeg)
         if r:
             r.update({"alignment_max_residual_ms": alignment_max_ms,
                       "alignment_rms_residual_ms": alignment_rms_ms,
-                      "alignment_max_phase_equivalent_deg": alignment_phase_deg})
+                      "alignment_max_phase_equivalent_deg": alignment_phase_deg,
+                      "flash_stop_source": ("post_flash_marker_sequence"
+                                            if protocol_stop_eeg is not None else "offset_pulse"),
+                      "first_cycle_start_s": cycle_onsets_eeg[0],
+                      "recording_starts_during_cycle": bool(cycle_onsets_eeg[0] < 0)})
             results.append(r)
 
     if not results:

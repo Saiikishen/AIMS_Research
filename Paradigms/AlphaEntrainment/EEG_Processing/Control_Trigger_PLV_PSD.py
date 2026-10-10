@@ -20,7 +20,7 @@ import scipy
 from scipy.integrate import trapezoid
 from scipy.signal import butter, hilbert, iirnotch, sosfiltfilt, tf2sos, welch
 
-EDF_PATH = r"C:\Users\saiik\Downloads\miriam expt edf\Jacob_sub15\CONTROL\SUB15~ JACOB_0e04f0e8-fb17-4f50-8a72-31c9e4d27116.edf"
+EDF_PATH = r"C:\Users\saiik\Downloads\IAF Data\SOORYA_TRIAL2\DEMO~ DEMO_3d0ece1f-fa21-4d41-b7b4-e9ed867f7cc0.edf"
 OUTPUT_DIR = Path(__file__).resolve().parent / "control_results"
 CHANNELS = ("O1", "O2")
 REFERENCE_CHANNEL = "Cz"

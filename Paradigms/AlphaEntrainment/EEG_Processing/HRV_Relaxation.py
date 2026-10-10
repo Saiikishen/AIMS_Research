@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Calculate six HRV measures for four manually selected EDF windows.
+"""Calculate six HRV measures for four manually selected EDF windows and plot ECG waves & BPM.
 
 Edit the four EDF paths and their TMIN/TMAX values below, then run this file.
 Times are seconds from the beginning of each recording; each window must be
-at least 45 seconds. The only saved output is summary.csv with four rows.
+at least 45 seconds. Saved outputs include summary.csv and plots of heart waves & BPM over time.
 
-Requirements: numpy, pandas, scipy, mne, neurokit2.
+Requirements: numpy, pandas, scipy, mne, neurokit2, matplotlib.
 """
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from pathlib import Path
 import sys
 import warnings
 
+import matplotlib
+import matplotlib.pyplot as plt
 import mne
 import neurokit2 as nk
 import numpy as np
@@ -22,19 +24,19 @@ import pandas as pd
 from scipy.signal import butter, iirnotch, sosfiltfilt, tf2sos, welch
 
 # EDIT YOUR FOUR FILES AND TIME WINDOWS HERE.
-BEFORE_EXP_EDF = r"C:\Users\saiik\Downloads\analysis to do\SHEREYA_SUB26\SUB26~ SHREYA_85f31e46-e9ec-4e68-bf1d-f1d4ecf841b6.edf"
+BEFORE_EXP_EDF = r"C:\Users\saiik\Downloads\miriam expt edf\Analysis to do edf\HRIDYA_SUB34\SUB34~ HRIDYA_a567537d-edff-4b41-9dc8-dfc53e9acc82.edf"
 BEFORE_EXP_TMIN = 75
 BEFORE_EXP_TMAX = 135
 
-AFTER_EXP_EDF = r"C:\Users\saiik\Downloads\analysis to do\SHEREYA_SUB26\FLASHING\SUB26~ SHREYA_7f477fba-d6a0-48ec-b15f-e312289f993c.edf"
+AFTER_EXP_EDF = r"C:\Users\saiik\Downloads\miriam expt edf\Analysis to do edf\HRIDYA_SUB34\FLASHING\SUB34~ HRIDYA_ddaf3d46-ff81-4408-8647-91d57c041d32.edf"
 AFTER_EXP_TMIN = 306
 AFTER_EXP_TMAX = 360
 
-BEFORE_CONTROL_EDF = r"C:\Users\saiik\Downloads\analysis to do\SHEREYA_SUB26\control base\SUB26~ SHREYA_0c7881cd-5321-4918-82d4-bc47e9b9c6c6.edf"
+BEFORE_CONTROL_EDF = r"C:\Users\saiik\Downloads\miriam expt edf\Analysis to do edf\HRIDYA_SUB34\control base\SUB34~ HRIDYA_694243b7-e543-41bc-bf3c-63a4c67bf0b4.edf"
 BEFORE_CONTROL_TMIN = 75
 BEFORE_CONTROL_TMAX = 135
 
-AFTER_CONTROL_EDF = r"C:\Users\saiik\Downloads\analysis to do\SHEREYA_SUB26\control\SUB26~ SHREYA_7d964fcf-6ac0-4f43-9ca3-0a7214e99443.edf"
+AFTER_CONTROL_EDF = r"C:\Users\saiik\Downloads\miriam expt edf\Analysis to do edf\HRIDYA_SUB34\control\SUB34~ HRIDYA_b9a24dd3-60a3-47ff-95b5-a3ede8b41daf.edf"
 AFTER_CONTROL_TMIN = 313
 AFTER_CONTROL_TMAX = 368
 
@@ -45,6 +47,9 @@ ECG_CHANNEL = None  # None selects automatically; set a name to override.
 ECG_REFERENCE_CHANNEL = None  # With an explicit ECG_CHANNEL, None means no subtraction.
 ECG_POLARITY = "auto"
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "hrv_results" / "four_windows_metrics"
+
+SAVE_PLOTS = True
+SHOW_PLOTS = False  # Set to True to display interactive plot windows in addition to saving PNGs.
 
 FOUR_WINDOW_ORDER = ("before_exp", "after_exp", "before_control", "after_control")
 WINDOW_LABELS = {"before_exp": "Before EXP", "after_exp": "After EXP",
@@ -388,6 +393,10 @@ def prepare_four_windows(inputs):
             errors.append(f"{label}: enter the EDF path at the top of this file.")
             continue
         path = Path(filename).expanduser()
+        if not path.is_file() and "analysis to do" in str(path):
+            alt_path = Path(str(path).replace("analysis to do", "miriam expt edf"))
+            if alt_path.is_file():
+                path = alt_path
         if not path.is_absolute():
             path = Path(__file__).resolve().parent / path
         path = path.resolve()
@@ -435,10 +444,10 @@ def prepare_four_windows(inputs):
     return sessions
 
 
-def analyze_window(recording, session, cfg):
-    """Keep quality checks internal and return only the six requested measures."""
+def analyze_window(recording, session, cfg, return_plot_data: bool = False):
+    """Keep quality checks internal and return requested measures (and optional plot data)."""
     label = WINDOW_LABELS[session["session_id"]]
-    beats, _, _ = detect_beats(recording, cfg, session["ecg_polarity"])
+    beats, filtered, _ = detect_beats(recording, cfg, session["ecg_polarity"])
     intervals = classify_intervals(beats, cfg)
     start, end = session["start_s"], session["end_s"]
     selected = intervals.loc[(intervals.start_s >= start) & (intervals.end_s < end)].copy()
@@ -459,22 +468,223 @@ def analyze_window(recording, session, cfg):
     if missing:
         print(f"{WINDOW_LABELS[session['session_id']]}: could not calculate {', '.join(missing)}; shown as N/A.",
               file=sys.stderr)
-    return {key: metrics[key] for key in METRIC_COLUMNS}
+    res_metrics = {key: metrics[key] for key in METRIC_COLUMNS}
+    if return_plot_data:
+        plot_data = {
+            "session": session,
+            "recording": recording,
+            "filtered": filtered,
+            "beats": beats,
+            "selected": selected,
+            "metrics": metrics,
+        }
+        return res_metrics, plot_data
+    return res_metrics
 
 
-def run_four_windows(inputs=None, output=None):
+def plot_window_heart_rate_and_ecg(window_data, output_path=None, show: bool = False):
+    """Plot full-window ECG heart waves with R-peaks, instantaneous BPM over time, and a zoomed 10s ECG strip."""
+    session = window_data["session"]
+    recording = window_data["recording"]
+    filtered = window_data["filtered"]
+    beats = window_data["beats"]
+    selected = window_data["selected"].copy()
+    metrics = window_data["metrics"]
+
+    tmin, tmax = session["start_s"], session["end_s"]
+    times = recording["times"]
+    t_mask = (times >= tmin) & (times <= tmax)
+    t_win = times[t_mask]
+    ecg_win = filtered[t_mask]
+
+    # Scale to mV if Volts are tiny, else keep V
+    max_val = np.nanmax(np.abs(ecg_win)) if len(ecg_win) else 1.0
+    scale, unit = (1e3, "mV") if max_val < 1e-2 else (1.0, "V")
+
+    # Local beats in window
+    local_beats = beats.loc[(beats.time_s >= tmin) & (beats.time_s <= tmax)]
+    peak_times = local_beats.time_s.to_numpy()
+    peak_indices = local_beats.sample_index.to_numpy(dtype=int)
+    peak_amps = filtered[peak_indices] * scale if len(peak_indices) else np.array([])
+
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 10), layout="constrained")
+
+    # 1. Full-window Heart Waves (ECG)
+    ax1.plot(t_win, ecg_win * scale, color="#1f77b4", lw=0.9, label="Filtered ECG")
+    if len(peak_times):
+        ax1.scatter(peak_times, peak_amps, color="#d62728", s=22, zorder=4, label="Detected R-peaks")
+    ax1.set_ylabel(f"ECG ({unit})", fontsize=10)
+    ax1.set_title(f"Heart Waves (Full Window ECG: {tmin:.1f}s – {tmax:.1f}s)", fontsize=11, fontweight="bold")
+    ax1.grid(True, linestyle="--", alpha=0.4)
+    ax1.legend(loc="upper right", fontsize=8)
+    ax1.set_xlim(tmin, tmax)
+
+    # 2. Instantaneous Heart Rate (BPM) over time
+    if len(selected):
+        selected["bpm"] = 60000.0 / selected["rr_ms"]
+        good = selected.accepted.to_numpy(dtype=bool)
+        bpm_times = selected.end_s.to_numpy()
+        bpms = selected.bpm.to_numpy()
+        if np.any(good):
+            ax2.plot(bpm_times[good], bpms[good], color="#2ca02c", lw=1.5, marker="o", markersize=4,
+                     label="Instantaneous BPM")
+        if np.any(~good):
+            ax2.scatter(bpm_times[~good], bpms[~good], color="#d62728", marker="x", s=40, zorder=5,
+                        label="Excluded / Artifact RR")
+
+    mean_hr = metrics.get("mean_hr_bpm")
+    if mean_hr is not None and np.isfinite(mean_hr):
+        ax2.axhline(mean_hr, color="#ff7f0e", linestyle="--", lw=1.5, label=f"Mean HR: {mean_hr:.1f} BPM")
+    ax2.set_xlabel("Time (s)", fontsize=10)
+    ax2.set_ylabel("Heart Rate (BPM)", fontsize=10)
+    ax2.set_title("Instantaneous Heart Rate (BPM) Over Time", fontsize=11, fontweight="bold")
+    ax2.grid(True, linestyle="--", alpha=0.4)
+    ax2.legend(loc="upper right", fontsize=8)
+    ax2.set_xlim(tmin, tmax)
+
+    # 3. Zoomed 10-second ECG strip for detailed heart wave morphology
+    strip_len = min(10.0, max(1.0, tmax - tmin))
+    strip_start = min(tmin + 5.0, max(tmin, tmax - strip_len))
+    strip_end = strip_start + strip_len
+    z_mask = (times >= strip_start) & (times <= strip_end)
+    z_beats = beats.loc[(beats.time_s >= strip_start) & (beats.time_s <= strip_end)]
+    ax3.plot(times[z_mask], filtered[z_mask] * scale, color="#1f77b4", lw=1.2, label="Filtered ECG")
+    if len(z_beats):
+        ax3.scatter(z_beats.time_s, filtered[z_beats.sample_index.to_numpy(dtype=int)] * scale,
+                    color="#d62728", s=35, zorder=4, label="R-peaks")
+    ax3.set_ylabel(f"ECG ({unit})", fontsize=10)
+    ax3.set_xlabel("Time (s)", fontsize=10)
+    ax3.set_title(f"Detailed Heart Wave Morphology (Zoomed 10s Strip: {strip_start:.1f}s – {strip_end:.1f}s)",
+                  fontsize=11, fontweight="bold")
+    ax3.grid(True, linestyle="--", alpha=0.4)
+    ax3.legend(loc="upper right", fontsize=8)
+    ax3.set_xlim(strip_start, strip_end)
+
+    label = WINDOW_LABELS.get(session["session_id"], session["session_id"])
+    parts = []
+    if np.isfinite(metrics.get("mean_hr_bpm", np.nan)):
+        parts.append(f"Mean HR: {metrics['mean_hr_bpm']:.1f} bpm")
+    if np.isfinite(metrics.get("rmssd_ms", np.nan)):
+        parts.append(f"RMSSD: {metrics['rmssd_ms']:.1f} ms")
+    if np.isfinite(metrics.get("sdnn_ms", np.nan)):
+        parts.append(f"SDNN: {metrics['sdnn_ms']:.1f} ms")
+    if np.isfinite(metrics.get("ln_rmssd", np.nan)):
+        parts.append(f"lnRMSSD: {metrics['ln_rmssd']:.3f}")
+    if np.isfinite(metrics.get("hf_power_ms2", np.nan)):
+        parts.append(f"HF: {metrics['hf_power_ms2']:.1f} ms²")
+    if np.isfinite(metrics.get("lf_hf_ratio", np.nan)):
+        parts.append(f"LF/HF: {metrics['lf_hf_ratio']:.2f}")
+
+    metrics_str = " | ".join(parts)
+    fig.suptitle(f"{label} · Heart Waves & Heart Rate (BPM)\n{metrics_str}", fontsize=12, fontweight="bold")
+
+    if output_path is not None:
+        out_p = Path(output_path)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_p, dpi=160, bbox_inches="tight")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_four_windows_comparison(all_window_data, output_path=None, show: bool = False):
+    """Plot a 4-row x 2-column comparison of Heart Waves (ECG) and Heart Rate (BPM) across all four windows."""
+    fig, axes = plt.subplots(len(all_window_data), 2, figsize=(16, 3.2 * len(all_window_data)), layout="constrained")
+    if len(all_window_data) == 1:
+        axes = np.array([axes])
+
+    for idx, wdata in enumerate(all_window_data):
+        session = wdata["session"]
+        recording = wdata["recording"]
+        filtered = wdata["filtered"]
+        beats = wdata["beats"]
+        selected = wdata["selected"].copy()
+        metrics = wdata["metrics"]
+
+        tmin, tmax = session["start_s"], session["end_s"]
+        times = recording["times"]
+        t_mask = (times >= tmin) & (times <= tmax)
+        t_win = times[t_mask]
+        ecg_win = filtered[t_mask]
+
+        max_val = np.nanmax(np.abs(ecg_win)) if len(ecg_win) else 1.0
+        scale, unit = (1e3, "mV") if max_val < 1e-2 else (1.0, "V")
+
+        label = WINDOW_LABELS.get(session["session_id"], session["session_id"])
+
+        # Column 0: Heart Waves (ECG)
+        ax_ecg = axes[idx, 0]
+        ax_ecg.plot(t_win, ecg_win * scale, color="#1f77b4", lw=0.8)
+        local_b = beats.loc[(beats.time_s >= tmin) & (beats.time_s <= tmax)]
+        if len(local_b):
+            ax_ecg.scatter(local_b.time_s, filtered[local_b.sample_index.to_numpy(dtype=int)] * scale,
+                           color="#d62728", s=14, zorder=3)
+        ax_ecg.set_ylabel(f"{label}\nECG ({unit})", fontsize=10)
+        ax_ecg.set_xlim(tmin, tmax)
+        ax_ecg.grid(True, linestyle="--", alpha=0.3)
+        if idx == 0:
+            ax_ecg.set_title("Heart Waves (ECG & R-Peaks)", fontsize=11, fontweight="bold")
+        if idx == len(all_window_data) - 1:
+            ax_ecg.set_xlabel("Time (s)", fontsize=10)
+
+        # Column 1: Heart Rate (BPM over time)
+        ax_bpm = axes[idx, 1]
+        if len(selected):
+            selected["bpm"] = 60000.0 / selected["rr_ms"]
+            good = selected.accepted.to_numpy(dtype=bool)
+            if np.any(good):
+                ax_bpm.plot(selected.end_s[good], selected.bpm[good], color="#2ca02c", lw=1.2,
+                            marker="o", markersize=3, label="BPM")
+            if np.any(~good):
+                ax_bpm.scatter(selected.end_s[~good], selected.bpm[~good], color="#d62728",
+                               marker="x", s=25, label="Excluded")
+        mean_hr = metrics.get("mean_hr_bpm")
+        if mean_hr is not None and np.isfinite(mean_hr):
+            ax_bpm.axhline(mean_hr, color="#ff7f0e", linestyle="--", lw=1.2, label=f"Mean: {mean_hr:.1f} BPM")
+            ax_bpm.legend(loc="upper right", fontsize=8)
+        ax_bpm.set_ylabel("BPM", fontsize=10)
+        ax_bpm.set_xlim(tmin, tmax)
+        ax_bpm.grid(True, linestyle="--", alpha=0.3)
+        if idx == 0:
+            ax_bpm.set_title("Heart Rate (BPM Over Time)", fontsize=11, fontweight="bold")
+        if idx == len(all_window_data) - 1:
+            ax_bpm.set_xlabel("Time (s)", fontsize=10)
+
+    fig.suptitle("Four Windows Comparison: Heart Waves (ECG) and Heart Rate (BPM) Over Time",
+                 fontsize=13, fontweight="bold")
+    if output_path is not None:
+        out_p = Path(output_path)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_p, dpi=160, bbox_inches="tight")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def run_four_windows(inputs=None, output=None, save_plots: bool = SAVE_PLOTS, show_plots: bool = SHOW_PLOTS):
     sessions = prepare_four_windows(manual_inputs() if inputs is None else inputs)
     cfg = Config()
     rows = []
-    for session in sessions:
-        recording = load_recording(session)
-        metrics = analyze_window(recording, session, cfg)
-        rows.append({"Window": WINDOW_LABELS[session["session_id"]],
-                     **{label: metrics[key] for key, label in METRIC_COLUMNS.items()}})
-    table = pd.DataFrame(rows, columns=["Window", *METRIC_COLUMNS.values()])
-    # A separate folder keeps these results apart from earlier detailed exports.
+    all_window_data = []
     output = Path(OUTPUT_DIR if output is None else output).resolve()
     output.mkdir(parents=True, exist_ok=True)
+
+    for session in sessions:
+        recording = load_recording(session)
+        metrics, window_data = analyze_window(recording, session, cfg, return_plot_data=True)
+        rows.append({"Window": WINDOW_LABELS[session["session_id"]],
+                     **{label: metrics[key] for key, label in METRIC_COLUMNS.items()}})
+        all_window_data.append(window_data)
+        if save_plots or show_plots:
+            plot_path = output / f"{session['session_id']}_heart_rate_and_ecg.png" if save_plots else None
+            plot_window_heart_rate_and_ecg(window_data, output_path=plot_path, show=show_plots)
+
+    if (save_plots or show_plots) and all_window_data:
+        comp_path = output / "four_windows_heart_rate_and_ecg.png" if save_plots else None
+        plot_four_windows_comparison(all_window_data, output_path=comp_path, show=show_plots)
+
+    table = pd.DataFrame(rows, columns=["Window", *METRIC_COLUMNS.values()])
+    # A separate folder keeps these results apart from earlier detailed exports.
     destination = output / "summary.csv"
     temporary = output / "summary.csv.tmp"
     try:
@@ -484,16 +694,23 @@ def run_four_windows(inputs=None, output=None):
         temporary.unlink(missing_ok=True)
     print(table.to_string(index=False, float_format=lambda value: f"{value:.3f}", na_rep="N/A"))
     print(f"\nSaved: {destination}")
+    if save_plots:
+        print(f"\nSaved plots ({output}):")
+        for s in sessions:
+            print(f"  {s['session_id']}_heart_rate_and_ecg.png")
+        print("  four_windows_heart_rate_and_ecg.png")
     return table
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Calculate the six HRV measures for your four EDF windows.")
-    parser.add_argument("--output", type=Path, default=None, help="Folder for the single summary.csv file")
+    parser = argparse.ArgumentParser(description="Calculate the six HRV measures for your four EDF windows and plot ECG waves & BPM.")
+    parser.add_argument("--output", type=Path, default=None, help="Folder for the summary.csv and plot files")
+    parser.add_argument("--show", action="store_true", help="Display interactive plot windows")
+    parser.add_argument("--no-plot", action="store_true", help="Skip generating and saving plot images")
     parser.add_argument("--no-open", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
-        run_four_windows(output=args.output)
+        run_four_windows(output=args.output, save_plots=not args.no_plot, show_plots=args.show or SHOW_PLOTS)
     except (ValueError, KeyError, OSError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 2
